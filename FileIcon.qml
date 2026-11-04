@@ -12,39 +12,35 @@ Item {
   property int size: 48
   property real maxWidth: size     // the widest the visible picture may be (see DockButton)
 
-  // Previews come from the shared thumbnail cache (~/.cache/thumbnails), which Files fills
-  // for every type it has a previewer for: images, PDFs, videos, music covers, Office
-  // documents... So any file Files shows a preview for gets the same one here (once Files
-  // has made it; we don't generate any). Images without one are shown themselves (slower
-  // for big photos); other files show their type icon. Whether the cache has one is
-  // checked by the dock's silent icon measurer (as for icon files, see Dock.qml's
-  // displayableIcon), so a missing cache file never makes an Image print "Cannot open".
-  readonly property var cacheSources: {
-    if (!file || file.isDir) return []
-    // The cache names a thumbnail after the MD5 of the file's URI, escaped the GLib way.
-    var uri = ("file://" + encodeURI(file.path)).replace(/#/g, "%23").replace(/\?/g, "%3F")
-    var hash = Qt.md5(uri)
-    var cache = Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")
-    return ["file://" + cache + "/thumbnails/large/" + hash + ".png",
-            "file://" + cache + "/thumbnails/normal/" + hash + ".png"]
-  }
-  function requestCacheChecks() {
-    for (var i = 0; i < cacheSources.length; i++) dock.requestMeasurement(cacheSources[i])
-  }
-  onCacheSourcesChanged: requestCacheChecks()
-  Component.onCompleted: requestCacheChecks()
+  // Previews come from the shared thumbnail cache (~/.cache/thumbnails), the one Files uses,
+  // for every type there's a previewer for: images, PDFs, videos, music covers, Office
+  // documents... Missing or outdated ones are made the way Files would (see Dock.qml's
+  // requestPreview), which also tells this icon where its preview is. Until then it shows
+  // its type icon; images without a preview are shown themselves.
+  property string previewUrl: ""
+  property bool previewAnswered: false
 
-  // The first cached thumbnail that loads, else the image itself (images only); "" for no
-  // preview, or while still checking.
-  readonly property string thumbSource: {
-    if (cacheSources.length === 0) return ""
-    for (var i = 0; i < cacheSources.length; i++) {
-      var known = dock.iconExtents[cacheSources[i]]
-      if (known) return cacheSources[i]
-      if (known === undefined) return ""
-    }
-    return file.image ? Util.fileUrl(file.path) : ""
+  function lookUpPreview() {
+    var known = file ? dock.previewKnown[file.path] : undefined
+    previewUrl = known ? known.url : ""
+    previewAnswered = known !== undefined
   }
+  function askForPreview() {
+    lookUpPreview()
+    if (file) dock.requestPreview(file)
+  }
+  onFileChanged: askForPreview()
+  Component.onCompleted: askForPreview()
+  // Out of view (scrolled away, stack closed): its preview isn't needed any more.
+  Component.onDestruction: dock.cancelPreview(file)
+  Connections {
+    target: fileIcon.dock
+    function onPreviewReady(path) { if (fileIcon.file && path === fileIcon.file.path) fileIcon.lookUpPreview() }
+  }
+
+  // What the frame shows: the preview, else the image itself; "" for the type icon.
+  readonly property string thumbSource: previewUrl !== "" ? previewUrl
+    : (previewAnswered && file && file.image ? Util.fileUrl(file.path) : "")
 
   width: size
   height: size
@@ -69,6 +65,7 @@ Item {
     fillMode: Image.PreserveAspectFit
     source: fileIcon.thumbSource
     autoTransform: true          // photos' rotation tags (portrait phone photos stay upright)
+    cache: false                 // a remade preview has the same path as the old one
     sourceSize.width: fileIcon.dock.iconSourceSize
     sourceSize.height: fileIcon.dock.iconSourceSize
     asynchronous: true

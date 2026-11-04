@@ -806,7 +806,7 @@ Item {
     if (q.length !== root.measureQueue.length) root.measureQueue = q
   }
 
-  // Measure an icon that isn't a slot of its own (file icons in a stack pile).
+  // Measure an icon that isn't a slot of its own (file-type icons in stacks).
   function requestMeasurement(src) {
     if (!src || root.iconExtents[src] !== undefined || root.measureQueue.indexOf(src) !== -1) return
     root.measureQueue = root.measureQueue.concat([src])
@@ -1271,6 +1271,91 @@ Item {
       })
     }
     return { files: map, totals: totals }
+  }
+
+  // ---- previews (see scripts/thumbnail.sh)
+  // Files shown in a stack (or the dock icon's pile) get their preview from the shared
+  // thumbnail cache, and one is made (the way Files would) when it's missing or outdated:
+  // in the background, two at a time, newest requests first, in small batches. A tile that
+  // scrolls out of view cancels its request, and closing a stack drops the rest, so fast
+  // scrolling through a big folder doesn't leave a backlog of work for files no longer in
+  // view. Each file is checked once per stack opening (once per session for the pile).
+  //
+  // The answers are kept in previewKnown, a plain record that is changed in place: nothing
+  // is bound to it, so a new answer doesn't make the dock or every tile re-evaluate. The
+  // tile concerned is told through previewReady and looks its answer up itself.
+  readonly property string thumbnailCache: (Quickshell.env("XDG_CACHE_HOME") || (root.home + "/.cache")) + "/thumbnails"
+
+  // The cache names a preview after the MD5 of the file's URI, escaped the GLib way.
+  function fileUri(path) {
+    return ("file://" + encodeURI(path)).replace(/#/g, "%23").replace(/\?/g, "%3F")
+  }
+
+  signal previewReady(string path)
+  property var previewKnown: ({})        // path -> { url }: url "" for no preview
+  property var previewChecked: ({})      // path -> true: asked for this time
+  property var previewQueue: []          // [{ mime, path, uri, hash }], newest last
+  property var previewPending: ({})      // hash -> path, for the batch being made
+
+  function requestPreview(file) {
+    if (!file || file.isDir || root.previewChecked[file.path]) return
+    root.previewChecked[file.path] = true
+    var uri = fileUri(file.path)
+    root.previewQueue.push({ mime: file.mime, path: file.path, uri: uri, hash: Qt.md5(uri) })
+    previewBatchTimer.restart()
+  }
+
+  // A tile left the view: if its request hasn't been sent yet, it's not needed any more.
+  function cancelPreview(file) {
+    if (!file) return
+    for (var i = root.previewQueue.length - 1; i >= 0; i--) {
+      if (root.previewQueue[i].path === file.path) {
+        root.previewQueue.splice(i, 1)
+        delete root.previewChecked[file.path]
+      }
+    }
+  }
+
+  function dropPreviewQueue() {
+    for (var i = 0; i < root.previewQueue.length; i++) delete root.previewChecked[root.previewQueue[i].path]
+    root.previewQueue = []
+  }
+
+  // Requests arriving together (a stack's tiles) go to the script together.
+  Timer { id: previewBatchTimer; interval: 50; onTriggered: root.nextPreviewBatch() }
+
+  Process {
+    id: previewMaker
+    stdout: SplitParser {
+      // "<md5> <result> [<preview path>]", one line per file as it's done.
+      onRead: function(line) {
+        var parts = String(line).split(" ")
+        var path = root.previewPending[parts[0]]
+        if (path === undefined) return
+        delete root.previewPending[parts[0]]
+        var found = (parts[1] === "ok" || parts[1] === "new") && parts.length > 2
+        var url = found ? "file://" + parts.slice(2).join(" ") : ""
+        // A remade preview has the same path as the outdated one: a changed URL makes the
+        // tile load it afresh (the query is ignored for local files).
+        if (found && parts[1] === "new") url += "?" + Date.now()
+        root.previewKnown[path] = { url: url }
+        root.previewReady(path)
+      }
+    }
+    onRunningChanged: if (!running) Qt.callLater(root.nextPreviewBatch)
+  }
+
+  function nextPreviewBatch() {
+    if (previewMaker.running || root.previewQueue.length === 0) return
+    var batch = root.previewQueue.splice(Math.max(0, root.previewQueue.length - 4), 4)
+    var args = ["bash", root.script("thumbnail.sh")]
+    root.previewPending = ({})
+    for (var i = 0; i < batch.length; i++) {
+      args.push(batch[i].mime, batch[i].path, batch[i].uri, batch[i].hash)
+      root.previewPending[batch[i].hash] = batch[i].path
+    }
+    previewMaker.command = args
+    previewMaker.running = true
   }
 
   // File-type icon from the current icon theme, with generic fallbacks. Remembered per
@@ -1760,6 +1845,7 @@ Item {
         win.stackTarget = button
         win.stackFolder = folder
         root.stackOpenDir = root.expandPath(folder.path)
+        root.previewChecked = ({})          // check the stack's previews afresh
         root.refreshFolders()
         win.stackOpen = true
       }
@@ -1770,6 +1856,7 @@ Item {
         if (win.stackOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.stackOpen = false
         root.stackOpenDir = ""
+        root.dropPreviewQueue()
         hideTimer.restart()
       }
 

@@ -54,7 +54,8 @@ omarchy plugin remove vitrin
 
 ## Settings
 
-Vitrin keeps its settings in `~/.config/omarchy/vitrin.json`. Most of them can be changed
+A new dock starts with Files, your default terminal and your default browser, then
+Downloads and Trash. Vitrin keeps its settings in `~/.config/omarchy/vitrin.json`. Most of them can be changed
 from the dock itself, but the file is plain JSON and can be edited by hand; the dock picks up
 changes when the file is saved.
 
@@ -68,7 +69,7 @@ changes when the file is saved.
     "dividerResize": true   // drag the divider to resize
   },
   // Desktop entry IDs, in dock order (Files always comes first).
-  "pins": ["org.gnome.Nautilus", "WhatsApp", "libreoffice-writer"],
+  "pins": ["org.gnome.Nautilus", "Alacritty", "chromium"],
   // Folder shortcuts on the right. "icon" is an icon name or an image path.
   // openAs / displayAs: "stack" or "folder" (Trash is always a folder).
   "folders": [

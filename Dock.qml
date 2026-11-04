@@ -128,6 +128,8 @@ Item {
           }
         }
         if (id !== root.terminalApp) root.terminalApp = id
+        root.terminalKnown = true
+        root.finishFirstRun(false)
       }
     }
   }
@@ -186,9 +188,70 @@ Item {
     onFileChanged: reload()
     onLoaded: root.applyConfig(text())
     onLoadFailed: function(error) {
-      // First run: no config yet, so write the defaults.
-      root.saveConfig()
+      // First run: no config yet, so set up the default dock (see "first run").
+      root.startFirstRun()
     }
+  }
+
+  // ------------------------------------------------------------ first run
+  // A new dock starts with Files, the default terminal and the default browser (each only
+  // if installed), then Downloads and Trash. Both defaults are looked up asynchronously, so
+  // the config is written once both are known (or after firstRunTimeout).
+  property bool firstRun: false
+  property bool terminalKnown: false
+  property string browserApp: ""
+  property bool browserKnown: false
+  readonly property var knownBrowsers: ["chromium", "firefox", "zen", "google-chrome", "brave-browser",
+    "org.mozilla.firefox", "com.brave.Browser"]
+
+  Process {
+    id: browserFinder
+    // Omarchy's own resolver when present (xdg-settings answers with Omarchy's link
+    // forwarder, "omarchy-browser", which isn't a browser), else xdg-settings.
+    command: ["bash", "-c", "command -v omarchy-cmd-default-browser >/dev/null && exec omarchy-cmd-default-browser; "
+      + "exec xdg-settings get default-web-browser"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var id = String(text).trim().replace(/\.desktop$/, "")
+        var entry = id ? DesktopEntries.byId(id) : null
+        if (!entry || entry.noDisplay || id === "omarchy-browser") {
+          // No default set: the first known browser that's installed.
+          id = ""
+          for (var i = 0; i < root.knownBrowsers.length; i++) {
+            if (DesktopEntries.byId(root.knownBrowsers[i])) { id = root.knownBrowsers[i]; break }
+          }
+        }
+        root.browserApp = id
+        root.browserKnown = true
+        root.finishFirstRun(false)
+      }
+    }
+  }
+
+  Timer {
+    id: firstRunTimer
+    interval: 3000
+    onTriggered: root.finishFirstRun(true)
+  }
+
+  // Also what happens when the config file is deleted while the dock runs: it starts over.
+  function startFirstRun() {
+    applySettings(root.settingDefaults)
+    root.folders = defaultFolders()
+    root.aliases = ({})
+    root.firstRun = true
+    browserFinder.running = true
+    firstRunTimer.start()
+  }
+
+  function finishFirstRun(force) {
+    if (!root.firstRun || (!force && !(root.terminalKnown && root.browserKnown))) return
+    root.firstRun = false
+    firstRunTimer.stop()
+    root.pins = normalizePins([root.fixedApp, root.terminalApp, root.browserApp].filter(function(id) {
+      return !!id && !!DesktopEntries.byId(id)
+    }))
+    saveConfig()
   }
 
   // Set when the config file can't be parsed: saving is paused (so a hand edit with a

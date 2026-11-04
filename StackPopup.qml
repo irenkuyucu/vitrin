@@ -23,8 +23,10 @@ PopupWindow {
   readonly property int columns: 4
   readonly property int rows: Math.max(1, Math.min(3, Math.ceil(files.length / columns),
     Math.floor((window.screen ? window.screen.height / 2 : 400) / tileHeight)))
-  readonly property int tileWidth: 88
-  readonly property int tileHeight: 96
+  // Names take one line, shortened in the middle so the extension stays visible
+  // ("Screenshot 2026…PM.png"), like the macOS stack.
+  readonly property int tileWidth: 100
+  readonly property int tileHeight: 84
   readonly property int iconSize: 48
 
   // Small per-file menu, drawn inside the stack (right-click a file).
@@ -45,79 +47,6 @@ PopupWindow {
   implicitHeight: card.height + dock.shadowPad * 2
 
   onVisibleChanged: if (!visible) tileMenuFile = null
-
-  // File names: up to two lines, shortened in the middle like macOS (see fitName).
-  FontMetrics {
-    id: nameMetrics
-    font.family: stack.dock.uiFont
-    font.pixelSize: stack.dock.uiFontSize - 2
-  }
-  readonly property real nameWidth: stack.tileWidth - 10 - 2   // label width, minus a small safety margin
-
-  // Lines the label would need: wraps after spaces and hyphens, and inside words that
-  // are too long for a line (like Text.WrapAtWordBoundaryOrAnywhere).
-  function lineCount(s) {
-    var tokens = s.match(/[^\s-]*[\s-]*/g).filter(function(t) { return t.length > 0 })
-    var lines = 1, x = 0
-    for (var i = 0; i < tokens.length; i++) {
-      var t = tokens[i]
-      var visible = nameMetrics.advanceWidth(t.replace(/\s+$/, ""))
-      if (x > 0 && x + visible > stack.nameWidth) { lines++; x = 0 }
-      if (visible <= stack.nameWidth) { x += nameMetrics.advanceWidth(t); continue }
-      for (var c = 0; c < t.length; c++) {
-        var cw = nameMetrics.advanceWidth(t[c])
-        if (x > 0 && x + cw > stack.nameWidth) { lines++; x = 0 }
-        x += cw
-      }
-    }
-    return lines
-  }
-
-  // macOS-style: a name that needs more than two lines keeps whole words on the first
-  // line, and the second line is shortened in the middle, keeping the end of the name
-  // (with its extension): "Quarterly report final" / "versi…(copy 3).pdf".
-  function fitName(name) {
-    if (lineCount(name) <= 2) return name
-    // First line: as many whole words (or, for one long word, characters) as fit.
-    var tokens = name.match(/[^\s-]*[\s-]*/g).filter(function(t) { return t.length > 0 })
-    var first = ""
-    for (var i = 0; i < tokens.length; i++) {
-      if (nameMetrics.advanceWidth((first + tokens[i]).replace(/\s+$/, "")) > stack.nameWidth) break
-      first += tokens[i]
-    }
-    if (first.length === 0) {
-      while (first.length < name.length && nameMetrics.advanceWidth(name.slice(0, first.length + 1)) <= stack.nameWidth)
-        first = name.slice(0, first.length + 1)
-    }
-    var rest = name.slice(first.length)
-    first = first.replace(/\s+$/, "")
-    // Second line: start of the rest + "…" + end of the name. The end always keeps the
-    // extension; the remaining room is shared evenly between start and end (like macOS),
-    // growing each by one character in turn until the line is full.
-    if (nameMetrics.advanceWidth(rest) <= stack.nameWidth) return first + "\n" + rest
-    var dot = rest.lastIndexOf(".")
-    var ext = dot > 0 && rest.length - dot <= 8 ? rest.length - dot : 0
-    var headLen = 0
-    var tailLen = Math.min(ext, rest.length - 1)
-    function line(h, t) {
-      return rest.slice(0, h).replace(/\s+$/, "") + "…" + rest.slice(rest.length - t)
-    }
-    var growHead = true
-    var stuck = 0
-    while (headLen + tailLen < rest.length - 1 && stuck < 2) {
-      var h = headLen + (growHead ? 1 : 0)
-      var t = tailLen + (growHead ? 0 : 1)
-      if (nameMetrics.advanceWidth(line(h, t)) <= stack.nameWidth) {
-        headLen = h
-        tailLen = t
-        stuck = 0
-      } else {
-        stuck++
-      }
-      growHead = !growHead
-    }
-    return first + "\n" + line(headLen, tailLen)
-  }
 
   function openFile(file) {
     stack.window.closeStack()
@@ -268,11 +197,9 @@ PopupWindow {
               anchors.horizontalCenter: parent.horizontalCenter
               width: parent.width - 10
               horizontalAlignment: Text.AlignHCenter
-              wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-              maximumLineCount: 2
-              elide: Text.ElideRight
+              elide: Text.ElideMiddle
               textFormat: Text.PlainText
-              text: stack.fitName(tile.modelData.name)
+              text: tile.modelData.name
               color: Commons.Color.popups.text
               font.family: stack.dock.uiFont
               font.pixelSize: stack.dock.uiFontSize - 2

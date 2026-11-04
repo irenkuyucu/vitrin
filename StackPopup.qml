@@ -5,9 +5,11 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
 
-// A folder opened as a stack: its newest files in a grid above the folder's dock icon.
-// Click a file to open it; right-click for Open / Show in Files. Clicking anywhere
-// outside closes it, like the dock's menus.
+// A folder opened as a stack: its files, newest first, in a grid above the folder's dock
+// icon (up to dock.stackMax of them). The grid shows at most 3 rows (fewer on short
+// screens) and scrolls for the rest, creating tiles (and loading thumbnails) only for
+// the ones in view. Click a file to open it; right-click for Open / Show in Files.
+// Clicking anywhere outside closes it, like the dock's menus.
 PopupWindow {
   id: stack
 
@@ -15,8 +17,11 @@ PopupWindow {
   required property var window          // the dock window this stack belongs to
 
   readonly property var folder: window.stackFolder
-  readonly property var files: folder ? dock.filesFor(folder) : []
+  readonly property var files: folder ? dock.stackFilesFor(folder) : []
+  readonly property int total: folder ? dock.stackTotalFor(folder) : 0
   readonly property int columns: 4
+  readonly property int rows: Math.max(1, Math.min(3, Math.ceil(files.length / columns),
+    Math.floor((window.screen ? window.screen.height / 2 : 400) / tileHeight)))
   readonly property int tileWidth: 88
   readonly property int tileHeight: 96
   readonly property int iconSize: 48
@@ -191,12 +196,28 @@ PopupWindow {
         font.pixelSize: stack.dock.uiFontSize
       }
 
-      Grid {
+      GridView {
+        id: grid
         visible: stack.files.length > 0
-        columns: stack.columns
+        width: stack.columns * stack.tileWidth
+        height: stack.rows * stack.tileHeight
+        cellWidth: stack.tileWidth
+        cellHeight: stack.tileHeight
+        model: stack.files
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        // Scrolls with momentum (Qt's own). Not while a file's menu is open: the files stay
+        // put under it, like the dock's other menus.
+        interactive: stack.tileMenuFile === null
+        cacheBuffer: stack.tileHeight      // a row above and below, for smooth scrolling
+        readonly property bool scrolls: contentHeight > height + 0.5
+        // Back to the newest files whenever the stack opens or the folder changes.
+        Connections {
+          target: stack
+          function onFolderChanged() { grid.positionViewAtBeginning() }
+          function onVisibleChanged() { if (stack.visible) grid.positionViewAtBeginning() }
+        }
 
-        Repeater {
-          model: stack.files
           delegate: Item {
             id: tile
             required property var modelData
@@ -241,6 +262,7 @@ PopupWindow {
               id: tileMouse
               anchors.fill: parent
               hoverEnabled: true
+              onWheel: function(w) { w.accepted = false }   // scrolling is for the grid
               acceptedButtons: Qt.LeftButton | Qt.RightButton
               // While a file's menu is open, a click anywhere only closes that menu
               // (like the dock's own menus), so it can't open the file underneath.
@@ -256,6 +278,29 @@ PopupWindow {
               }
             }
           }
+
+        // Fades over the grid's top and bottom where more files are hidden.
+        Rectangle {
+          parent: grid
+          visible: grid.scrolls && !grid.atYBeginning
+          anchors { left: parent.left; right: parent.right; top: parent.top }
+          height: 20
+          z: 5
+          gradient: Gradient {
+            GradientStop { position: 0; color: stack.dock.surface }
+            GradientStop { position: 1; color: Qt.rgba(stack.dock.surface.r, stack.dock.surface.g, stack.dock.surface.b, 0) }
+          }
+        }
+        Rectangle {
+          parent: grid
+          visible: grid.scrolls && !grid.atYEnd
+          anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+          height: 20
+          z: 5
+          gradient: Gradient {
+            GradientStop { position: 0; color: Qt.rgba(stack.dock.surface.r, stack.dock.surface.g, stack.dock.surface.b, 0) }
+            GradientStop { position: 1; color: stack.dock.surface }
+          }
         }
       }
 
@@ -268,6 +313,19 @@ PopupWindow {
       Item {
         width: parent.width
         height: 32
+
+        // When the folder has more than the stack shows.
+        Text {
+          visible: stack.total > stack.files.length && stack.files.length > 0
+          anchors.verticalCenter: parent.verticalCenter
+          leftPadding: 4
+          text: "Newest " + stack.files.length.toLocaleString(Qt.locale(), "f", 0)
+            + " of " + stack.total.toLocaleString(Qt.locale(), "f", 0)
+          color: Commons.Color.popups.text
+          opacity: 0.6
+          font.family: stack.dock.uiFont
+          font.pixelSize: stack.dock.uiFontSize - 1
+        }
 
         Rectangle {
           anchors.right: parent.right

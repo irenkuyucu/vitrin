@@ -1104,7 +1104,11 @@ Item {
   //   displayAs: "stack"  -> the dock icon shows its newest files piled up
   //              "folder" -> the dock icon is the folder icon
   // Both default to "stack", like Downloads on macOS.
-  readonly property int stackMax: 12
+  // Routine refreshes (each time the dock appears, and every 15 s with hiding off) only
+  // need the newest few for the dock icon's pile; an open stack loads the folder's newest
+  // stackMax entries (enough for anyone; opening takes about a second at most).
+  readonly property int pileMax: 3
+  readonly property int stackMax: 1000
 
   function openAsFor(folder) {
     return isTrash(folder) || folder.openAs === "folder" ? "folder" : "stack"
@@ -1157,8 +1161,56 @@ Item {
     folderLister.dirs = dirs
     // See scripts/list-folders.sh: newest entries by date added, hidden files and
     // unfinished downloads skipped.
-    folderLister.command = ["bash", root.script("list-folders.sh"), String(root.stackMax)].concat(dirs)
+    folderLister.command = ["bash", root.script("list-folders.sh"), String(root.pileMax)].concat(dirs)
     folderLister.running = true
+    if (root.stackOpenDir) refreshStack(root.stackOpenDir)
+  }
+
+  // ---- the open stack's full listing
+  // { dir, files: [file, ...], total }: total is how many entries the folder has in all.
+  property var stackListing: ({ dir: "", files: [], total: 0 })
+  property string stackOpenDir: ""        // set while a stack is open (see win.openStack)
+  property string stackRefreshPending: ""
+
+  Process {
+    id: stackLister
+    property string dir: ""
+    stdout: StdioCollector {
+      onStreamFinished: root.applyStackListing(stackLister.dir, text)
+    }
+    onRunningChanged: {
+      if (!running && root.stackRefreshPending) {
+        var dir = root.stackRefreshPending
+        root.stackRefreshPending = ""
+        root.refreshStack(dir)
+      }
+    }
+  }
+
+  function refreshStack(dir) {
+    if (stackLister.running) {
+      root.stackRefreshPending = dir
+      return
+    }
+    stackLister.dir = dir
+    stackLister.command = ["bash", root.script("list-folders.sh"), String(root.stackMax), dir]
+    stackLister.running = true
+  }
+
+  function applyStackListing(dir, text) {
+    var listing = parseFolderListing([dir], text)
+    var next = { dir: dir, files: listing.files[dir] || [], total: listing.totals[dir] || 0 }
+    if (JSON.stringify(next) !== JSON.stringify(root.stackListing)) root.stackListing = next
+  }
+
+  // An open stack's files: its full listing once loaded, the newest few until then.
+  function stackFilesFor(folder) {
+    var dir = expandPath(folder.path)
+    return root.stackListing.dir === dir ? root.stackListing.files : filesFor(folder)
+  }
+  function stackTotalFor(folder) {
+    var dir = expandPath(folder.path)
+    return root.stackListing.dir === dir ? root.stackListing.total : filesFor(folder).length
   }
 
   Timer {
@@ -1180,7 +1232,13 @@ Item {
   // Records are NUL-terminated "<folder index>\t<mime type>\t<path>" (so any file name,
   // even one with a tab or line break in it, comes through intact).
   function applyFolderListing(dirs, text) {
+    assignIfChanged("folderFiles", parseFolderListing(dirs, text).files)
+  }
+
+  // -> { files: { dir: [file, ...] }, totals: { dir: count } } (see scripts/list-folders.sh)
+  function parseFolderListing(dirs, text) {
     var map = {}
+    var totals = {}
     for (var d = 0; d < dirs.length; d++) map[dirs[d]] = []
     var records = String(text).split("\u0000")
     for (var i = 0; i < records.length; i++) {
@@ -1188,6 +1246,7 @@ Item {
       if (parts.length < 3) continue
       var dir = dirs[parseInt(parts[0])]
       if (!map[dir]) continue
+      if (parts[1] === "#total") { totals[dir] = parseInt(parts[2]) || 0; continue }
       var path = parts.slice(2).join("\t")
       var mime = parts[1] || "application/octet-stream"
       var isDir = mime === "inode/directory"
@@ -1200,12 +1259,20 @@ Item {
         image: /^image\/(png|jpeg|gif|webp|bmp|svg\+xml)$/.test(mime)
       })
     }
-    assignIfChanged("folderFiles", map)
+    return { files: map, totals: totals }
   }
 
-  // File-type icon from the current icon theme, with generic fallbacks.
+  // File-type icon from the current icon theme, with generic fallbacks. Remembered per
+  // type, since a big folder repeats the same few types many times.
+  property var mimeIconCache: ({})
   function mimeIcon(mime, isDir) {
     if (isDir) return "folder"
+    if (root.mimeIconCache[mime]) return root.mimeIconCache[mime]
+    var found = findMimeIcon(mime)
+    root.mimeIconCache[mime] = found
+    return found
+  }
+  function findMimeIcon(mime) {
     var top = mime.split("/")[0]
     var generic = { text: "text-x-generic", image: "image-x-generic", audio: "audio-x-generic",
                     video: "video-x-generic", font: "font-x-generic" }[top]
@@ -1656,6 +1723,7 @@ Item {
         win.tipText = ""
         win.stackTarget = button
         win.stackFolder = folder
+        root.stackOpenDir = root.expandPath(folder.path)
         root.refreshFolders()
         win.stackOpen = true
       }
@@ -1665,6 +1733,7 @@ Item {
       function closeStack(byOutsideClick) {
         if (win.stackOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.stackOpen = false
+        root.stackOpenDir = ""
         hideTimer.restart()
       }
 
@@ -1756,6 +1825,7 @@ Item {
         repeat: true
         running: win.dragFrom !== -1 && win.autoScrollSpeed !== 0
         onTriggered: {
+          rowView.cancelFlick()
           rowView.contentX = Math.max(0, Math.min(rowView.maxX, rowView.contentX + win.autoScrollSpeed))
           // The pointer hasn't moved, but the icons have moved under it.
           var p = row.mapFromItem(null, win.dragSceneX, win.dragSceneY)
@@ -1953,7 +2023,9 @@ Item {
             anchors.fill: parent
             contentWidth: win.rowWidth
             contentHeight: height
-            interactive: false
+            // Qt's own scrolling (with momentum, like the menus and stacks) for sideways
+            // swipes; up/down scrolling is turned sideways by the layer below.
+            interactive: win.overflowing
             boundsBehavior: Flickable.StopAtBounds
             clip: win.overflowing
 
@@ -2094,16 +2166,70 @@ Item {
           }
           }
 
-          // Scrolls the icons when the dock overflows: a layer over the whole dock that only
-          // takes scroll events (wheel or touchpad); clicks, hovering and dropped files pass
-          // through to the icons.
+          // Up/down scrolling when the dock overflows, turned into sideways scrolling with
+          // the same momentum as Qt's own: a layer over the whole dock that only takes scroll
+          // events (clicks, hovering and dropped files pass through to the icons). Sideways
+          // swipes pass through to rowView, which scrolls them itself.
           MouseArea {
+            id: scrollLayer
             anchors.fill: parent
             enabled: win.overflowing
             acceptedButtons: Qt.NoButton
-            onWheel: function(e) {
-              var d = e.pixelDelta.x || e.pixelDelta.y || (e.angleDelta.x || e.angleDelta.y) / 2
+
+            // A wheel notch flicks as far as Qt's own does sideways (~72 px); each notch
+            // restarts the glide at that speed, as Qt's does (measured: 3 quick notches move
+            // about 135 px either way). Velocities are Qt's: positive moves the icons back
+            // toward the start.
+            readonly property real notchVelocity: 465
+            // Notches in quick succession (spinning the wheel) get a small boost each, up to
+            // six, as Qt's do; tuned against Qt's own sideways scrolling (3, 6 and 10 quick
+            // notches land within about 7% of it).
+            readonly property real streakBoost: 0.12
+            property real lastNotchAt: 0
+            property int notchStreak: 0
+            property real lastStep: 0
+            // Touchpad: follow the fingers, then glide on at the speed they left with.
+            property var samples: []          // [{ t, d }] of the last ~100 ms
+
+            function scrollBy(d) {
               rowView.contentX = Math.max(0, Math.min(rowView.maxX, rowView.contentX - d))
+            }
+
+            onWheel: function(e) {
+              var dx = e.pixelDelta.x || e.angleDelta.x
+              var dy = e.pixelDelta.y || e.angleDelta.y
+              if (Math.abs(dx) > Math.abs(dy)) { e.accepted = false; return }   // sideways: Qt's
+              if (e.pixelDelta.y !== 0) {
+                rowView.cancelFlick()
+                scrollBy(e.pixelDelta.y)
+                var now = Date.now()
+                samples = samples.filter(function(s) { return now - s.t < 100 }).concat([{ t: now, d: e.pixelDelta.y }])
+                glideTimer.restart()
+              } else if (e.angleDelta.y !== 0) {
+                var step = (e.angleDelta.y / 120) * notchVelocity
+                var t = Date.now()
+                notchStreak = t - lastNotchAt < 150 && Math.sign(step) === Math.sign(lastStep) ? notchStreak + 1 : 0
+                lastNotchAt = t
+                lastStep = step
+                rowView.flick(step * (1 + streakBoost * Math.min(notchStreak, 6)), 0)
+              }
+            }
+
+            Timer {
+              id: glideTimer
+              interval: 60
+              onTriggered: {
+                var now = Date.now()
+                var recent = scrollLayer.samples.filter(function(s) { return now - s.t < 160 })
+                scrollLayer.samples = []
+                if (recent.length < 2) return
+                var sum = 0
+                for (var i = 0; i < recent.length; i++) sum += recent[i].d
+                var seconds = Math.max(0.016, (recent[recent.length - 1].t - recent[0].t) / 1000)
+                var velocity = sum / seconds
+                if (Math.abs(velocity) > 100)
+                  rowView.flick(Math.max(-rowView.maximumFlickVelocity, Math.min(rowView.maximumFlickVelocity, velocity)), 0)
+              }
             }
           }
         }

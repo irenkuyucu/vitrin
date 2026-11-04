@@ -1569,7 +1569,9 @@ Item {
       property real dragX: 0
       property string dragIcon: ""            // icon url (or the letter tile)
       property string dragName: ""
-      property int dragWidth: 0               // slot width of the dragged icon
+      // Slot width of the dragged icon, at the current size (which can change mid-drag: see
+      // dockWidthFor).
+      readonly property real dragWidth: win.dragFrom !== -1 ? root.slotWidthFor(root.iconSource(win.dragIcon), win.size) : 0
       // Set for the moment a pulled-out icon is removed: everything is already where it
       // belongs, so the slide-aside offsets are dropped without animating.
       property bool snapShifts: false
@@ -1589,8 +1591,11 @@ Item {
       property real dragSceneY: 0
       property bool dragRemovable: false
       readonly property int removeDistance: 40
+      // The dock's top edge when the drag started: fixed for the drag, because the dock's
+      // height can change while an icon is pulled out (and that mustn't move the line).
+      property real dragTopY: 0
       readonly property bool dragRemoving: dragFrom !== -1 && dragRemovable
-        && (zone.y + dockBox.y - dragSceneY) > removeDistance
+        && (dragTopY - dragSceneY) > removeDistance
 
       // Files dragged over the dock from another app (Files, browser, ...)
       property int dropDepth: 0
@@ -1601,9 +1606,13 @@ Item {
 
       // The dock's exact width and height at a given icon size (same arithmetic as the real
       // layout), so the preview lands exactly where the real dock will be on release.
+      // While an icon is pulled out to remove it, the dock is sized as if it were already
+      // gone: a dock shrunk to fit then lets its other icons grow into the space right away
+      // (instead of narrowing now and widening again on release).
       function dockWidthFor(size) {
         var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
         for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
+        if (win.dragRemoving) width -= root.slotWidthFor(root.iconSource(win.dragIcon), size)
         return width + root.leftPadFor(size) + root.rightPadFor(size)
       }
       function dockHeightFor(size) { return root.slotHeightFor(size) + (root.padFor(size) + 1) * 2 }
@@ -1632,7 +1641,14 @@ Item {
         return low
       }
       readonly property real fitTarget: win.width > 0 ? fitFor(root.iconSize) : root.iconSize
-      readonly property real size: fitTarget
+      // While an icon is being dragged (a pulled-out icon can let a crowded dock's icons
+      // grow, and dragging it back in shrinks them again), size changes ease in along with
+      // the gap opening or closing, instead of jumping. At other times they apply at once.
+      property real size: fitTarget
+      Behavior on size {
+        enabled: win.dragFrom !== -1 && !win.snapShifts
+        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+      }
 
       // Even at minFitSize the dock may not fit (dozens of apps): then it takes the screen's
       // width and its icons scroll sideways (mouse wheel or touchpad), see rowView.
@@ -1789,9 +1805,9 @@ Item {
         win.tipText = ""
         win.dragIcon = icon
         win.dragName = item ? item.name : ""
-        win.dragWidth = root.slotWidthFor(root.iconSource(icon), win.size)
         // Running apps (even pinned ones) only slide sideways; unpin those from their menu.
         win.dragRemovable = !!item && item.pinned && !root.isFixed(item.key) && item.windows.length === 0
+        win.dragTopY = zone.y + dockBox.y
         win.dragFrom = index
         win.dragTo = index
       }

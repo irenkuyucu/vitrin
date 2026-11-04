@@ -52,12 +52,11 @@ Item {
   readonly property int iconSourceSize: 144
   // Height proportions match the macOS dock (measured from a MacBook Air: at 60 px icons
   // the dock is 86 px tall, like macOS's 85 pt).
-  readonly property int itemPad: padFor(iconSize)      // above and below each icon
-  readonly property int dockPad: padFor(iconSize)      // inside the dock's edge
+  // (Each screen's dock may draw its icons smaller than iconSize to fit; see win.size.)
   readonly property int edgeMargin: 4                  // between the dock and the screen edge
-  readonly property int dockRadius: Math.round(iconSize / 3)
+  function radiusFor(size) { return Math.round(size / 3) }
   function padFor(size) { return Math.round(size * 0.1) }
-  function slotHeightFor(size) { return size + padFor(size) * 2 }
+  function slotHeightFor(size) { return Math.round(size) + padFor(size) * 2 }
   readonly property int menuRadius: 12
   readonly property int rowRadius: 6
   readonly property int tipRadius: 6
@@ -669,12 +668,19 @@ Item {
   readonly property int baseGap: 15        // between two icons' artwork
   readonly property int baseEnds: 15       // from the dock's edge to the first/last artwork
 
-  function gapFor(size) { return Math.round(root.baseGap * size / root.spacingBaseSize) }
-  function endsFor(size) { return Math.round(root.baseEnds * size / root.spacingBaseSize) }
+  // At the Size setting everything lands on whole pixels (exact gaps, crisp icons). A dock
+  // shrunk below it to fit the screen (see win.size) uses fractions instead, like macOS, so
+  // it fills the space exactly; whole pixels there would make its width jump by up to a
+  // slot as apps come and go (all the gaps grow by a pixel at once).
+  function fractional(size) { return size < root.iconSize - 0.0001 }
+  function px(value, size) { return fractional(size) ? value : Math.round(value) }
+
+  function gapFor(size) { return px(root.baseGap * size / root.spacingBaseSize, size) }
+  function endsFor(size) { return px(root.baseEnds * size / root.spacingBaseSize, size) }
 
   // Every icon's artwork starts this far into its slot, and the rest of the gap follows it,
   // so each gap is the same whole number of pixels even when it's odd (7 + 8 = 15).
-  function gapLeftFor(size) { return Math.floor(gapFor(size) / 2) }
+  function gapLeftFor(size) { return fractional(size) ? gapFor(size) / 2 : Math.floor(gapFor(size) / 2) }
   function gapRightFor(size) { return gapFor(size) - gapLeftFor(size) }
 
   // Padding inside the dock's left and right edges (including its 1 px border); the end
@@ -682,7 +688,7 @@ Item {
   function leftPadFor(size) { return Math.max(1, endsFor(size) - gapLeftFor(size)) }
   function rightPadFor(size) { return Math.max(1, endsFor(size) - gapRightFor(size)) }
   // Slot width for an icon that hasn't been measured yet (or can't be).
-  function classicSlotFor(size) { return size + Math.round(size / 8) * 2 }
+  function classicSlotFor(size) { return Math.round(size) + Math.round(size / 8) * 2 }
 
   // ------------------------------------------------------------ size normalization
   // Icon themes also draw their artwork at different sizes within the square (a document
@@ -713,6 +719,7 @@ Item {
   // right edges closest to whole pixels, so they come out crisp and gaps measure exact.
   function drawSizeFor(src, size) {
     var ideal = size * normScaleFor(src)
+    if (fractional(size)) return ideal
     var e = root.iconExtents[src]
     if (!e) return Math.round(ideal)
     var best = Math.round(ideal), bestScore = Infinity
@@ -728,12 +735,12 @@ Item {
   // in whole pixels.
   function artLeftFor(src, size) {
     var e = root.iconExtents[src]
-    return e ? Math.round(e.l * drawSizeFor(src, size)) : 0
+    return e ? px(e.l * drawSizeFor(src, size), size) : 0
   }
   function artWidthFor(src, size) {
     var e = root.iconExtents[src]
     var d = drawSizeFor(src, size)
-    return e ? Math.round(e.r * d) - Math.round(e.l * d) : d
+    return e ? px(e.r * d, size) - px(e.l * d, size) : d
   }
 
   // Slot width for an icon source at a given icon size: its drawn visible width plus one
@@ -748,18 +755,18 @@ Item {
   // up/down (whole pixels).
   function artOffsetFor(src, size) {
     var e = root.iconExtents[src]
-    return e ? Math.round((0.5 - (e.l + e.r) / 2) * drawSizeFor(src, size)) : 0
+    return e ? px((0.5 - (e.l + e.r) / 2) * drawSizeFor(src, size), size) : 0
   }
   function artOffsetYFor(src, size) {
     var e = root.iconExtents[src]
-    return e && e.hull ? Math.round((0.5 - (e.t + e.b) / 2) * drawSizeFor(src, size)) : 0
+    return e && e.hull ? px((0.5 - (e.t + e.b) / 2) * drawSizeFor(src, size), size) : 0
   }
 
   // Space on each side of the divider line, as a multiple of the gap between two icons,
   // rounded to whole pixels: 21 px beside 15 px gaps (macOS measures about 1.47).
   readonly property real dividerGapRatio: 1.375
 
-  function dividerSideFor(size) { return Math.round(gapFor(size) * root.dividerGapRatio) }
+  function dividerSideFor(size) { return px(gapFor(size) * root.dividerGapRatio, size) }
 
   function dividerWidthFor(size) {
     // The icons beside the divider already bring half a gap each; the divider adds the rest
@@ -914,6 +921,61 @@ Item {
     next = [root.fixedApp].concat(next.filter(function(k) { return k !== root.fixedApp }))
     if (JSON.stringify(next) !== JSON.stringify(root.layout)) root.layout = next
   }
+
+  // ------------------------------------------------------------ icons on screen
+  // The dock's app icons are kept in a model that changes one icon at a time (inserted,
+  // moved, or marked as leaving), rather than rebuilt from root.items on every change, so
+  // an app opening can grow its slot in and an app closing can shrink its slot away (see
+  // DockButton's "appear"), like macOS. Leaving icons stay in the model, marked, until their
+  // animation ends. Icons present at startup don't animate.
+  ListModel { id: iconModel }
+  property bool animateSlots: false
+  property var removeInstantly: ({})     // key -> true: no leaving animation (pulled out)
+  Timer { interval: 1000; running: true; onTriggered: root.animateSlots = true }
+
+  readonly property var itemsByKey: {
+    var map = {}
+    for (var i = 0; i < root.items.length; i++) map[root.items[i].key] = root.items[i]
+    return map
+  }
+
+  function modelIndexOf(key) {
+    for (var i = 0; i < iconModel.count; i++) {
+      var row = iconModel.get(i)
+      if (row.key === key && !row.leaving) return i
+    }
+    return -1
+  }
+
+  function syncIconModel() {
+    var target = root.layout
+    // Icons no longer in the dock leave (or go at once, when pulled out).
+    for (var i = iconModel.count - 1; i >= 0; i--) {
+      var row = iconModel.get(i)
+      if (row.leaving || target.indexOf(row.key) !== -1) continue
+      if (root.removeInstantly[row.key] || !root.animateSlots) iconModel.remove(i)
+      else iconModel.setProperty(i, "leaving", true)
+    }
+    root.removeInstantly = ({})
+    // The rest in the dock's order; leaving icons stay where they are among them.
+    var at = 0
+    for (var t = 0; t < target.length; t++) {
+      while (at < iconModel.count && iconModel.get(at).leaving) at++
+      var index = modelIndexOf(target[t])
+      if (index === -1) iconModel.insert(at, { key: target[t], leaving: false, appearing: root.animateSlots })
+      else if (index !== at) iconModel.move(index, at, 1)
+      at++
+    }
+  }
+
+  function finishLeaving(key) {
+    for (var i = 0; i < iconModel.count; i++) {
+      var row = iconModel.get(i)
+      if (row.key === key && row.leaving) { iconModel.remove(i); return }
+    }
+  }
+
+  onLayoutChanged: syncIconModel()
 
   readonly property var items: root.layout.map(function(key) {
     var entry = DesktopEntries.byId(key) || entryFor(key)
@@ -1445,6 +1507,14 @@ Item {
       // belongs, so the slide-aside offsets are dropped without animating.
       property bool snapShifts: false
       readonly property Item dragRow: row
+      // For icons fading at the edges of a scrolling dock (see DockButton's edgeFade).
+      readonly property real scrollX: rowView.contentX
+      readonly property real scrollMax: rowView.maxX
+      readonly property real viewWidth: rowView.width
+      readonly property real rowX: row.x
+      // The icons' actual width, including slots growing in or shrinking away, plus the
+      // dock's end padding: what the outline follows. (dockWidthFor is the settled width.)
+      readonly property real rowWidth: row.implicitWidth + root.leftPadFor(win.size) + root.rightPadFor(win.size)
 
       // Drag out to remove (pinned apps other than Files): pull the icon this far above
       // the dock and "Remove" appears; letting go there removes it from the dock.
@@ -1470,8 +1540,38 @@ Item {
         return width + root.leftPadFor(size) + root.rightPadFor(size)
       }
       function dockHeightFor(size) { return root.slotHeightFor(size) + (root.padFor(size) + 1) * 2 }
-      readonly property real previewScaleX: resizePreview > 0 ? dockWidthFor(resizePreview) / dockWidthFor(root.iconSize) : 1
-      readonly property real previewScaleY: resizePreview > 0 ? dockHeightFor(resizePreview) / dockHeightFor(root.iconSize) : 1
+      readonly property real previewScaleX: resizePreview > 0 ? dockWidthFor(resizePreview) / dockWidthFor(win.size) : 1
+      readonly property real previewScaleY: resizePreview > 0 ? dockHeightFor(resizePreview) / dockHeightFor(win.size) : 1
+
+      // ---------------------------------------------------------- fitting the screen
+      // Like macOS, the Size setting is a maximum: when the dock would be wider than the
+      // screen (leaving the end space free at each side), its icons are drawn smaller, down
+      // to minFitSize, at the exact fractional size that fills the space (see "fractional").
+      // Each screen fits its own dock. Size changes apply at once: easing them would make a
+      // full dock first narrow (an app's slot gone at the old size), then widen again.
+      readonly property int minFitSize: 32    // the smallest Size setting: never smaller than that
+      function fitsAt(size) { return dockWidthFor(size) + 2 * root.endsFor(size) <= win.width }
+      // The largest size up to maxSize that fits: maxSize itself if it does, else the exact
+      // fractional size, found by halving the interval.
+      function fitFor(maxSize) {
+        if (fitsAt(maxSize)) return maxSize
+        if (!fitsAt(win.minFitSize)) return win.minFitSize
+        var low = win.minFitSize, high = maxSize
+        for (var i = 0; i < 16; i++) {
+          var mid = (low + high) / 2
+          if (fitsAt(mid)) low = mid
+          else high = mid
+        }
+        return low
+      }
+      readonly property real fitTarget: win.width > 0 ? fitFor(root.iconSize) : root.iconSize
+      readonly property real size: fitTarget
+
+      // Even at minFitSize the dock may not fit (dozens of apps): then it takes the screen's
+      // width and its icons scroll sideways (mouse wheel or touchpad), see rowView.
+      readonly property int maxDockWidth: win.width - 2 * root.endsFor(win.size)
+      readonly property bool overflowing: dockWidthFor(win.size) > win.maxDockWidth
+      onOverflowingChanged: if (!overflowing) rowView.contentX = 0
 
       // Set while a resize is being applied, so the width animation (meant for apps opening
       // and closing) doesn't start from the old width and make the dock jump.
@@ -1620,7 +1720,7 @@ Item {
         win.tipText = ""
         win.dragIcon = icon
         win.dragName = item ? item.name : ""
-        win.dragWidth = root.slotWidthFor(root.iconSource(icon), root.iconSize)
+        win.dragWidth = root.slotWidthFor(root.iconSource(icon), win.size)
         // Running apps (even pinned ones) only slide sideways; unpin those from their menu.
         win.dragRemovable = !!item && item.pinned && !root.isFixed(item.key) && item.windows.length === 0
         win.dragFrom = index
@@ -1632,7 +1732,41 @@ Item {
         var scene = row.mapToItem(null, point.x, point.y)
         win.dragSceneX = scene.x
         win.dragSceneY = scene.y
-        win.dragX = point.x
+        updateDragTarget(point.x)
+        updateAutoScroll(point.x)
+      }
+
+      // Dragging near an edge of a scrolling dock scrolls it that way, faster nearer the
+      // edge (up to autoScrollMax px per frame); the landing gap follows along.
+      property real autoScrollSpeed: 0
+      readonly property int autoScrollMax: 10
+      function updateAutoScroll(rowX) {
+        var edge = Math.min(2 * win.size, rowView.width / 4)
+        var inView = row.x + rowX - rowView.contentX
+        var speed = 0
+        if (win.overflowing && !win.dragRemoving) {
+          if (inView < edge) speed = -win.autoScrollMax * (1 - Math.max(0, inView) / edge)
+          else if (inView > rowView.width - edge)
+            speed = win.autoScrollMax * (1 - Math.max(0, rowView.width - inView) / edge)
+        }
+        win.autoScrollSpeed = speed
+      }
+      Timer {
+        interval: 16
+        repeat: true
+        running: win.dragFrom !== -1 && win.autoScrollSpeed !== 0
+        onTriggered: {
+          rowView.contentX = Math.max(0, Math.min(rowView.maxX, rowView.contentX + win.autoScrollSpeed))
+          // The pointer hasn't moved, but the icons have moved under it.
+          var p = row.mapFromItem(null, win.dragSceneX, win.dragSceneY)
+          win.updateDragTarget(p.x)
+          win.updateAutoScroll(p.x)
+        }
+      }
+
+      function updateDragTarget(rowX) {
+        var point = { x: rowX }
+        win.dragX = rowX
         // Slots can differ in width, so try the dragged icon at each position among the
         // others and pick the one whose middle is closest to the pointer.
         var best = 0
@@ -1643,7 +1777,7 @@ Item {
           if (i === win.dragFrom) continue
           var distance = Math.abs(point.x - (left + win.dragWidth / 2))
           if (distance < bestDistance) { bestDistance = distance; best = k }
-          if (i < root.items.length) left += root.slotWidthFor(root.pickIcon(root.items[i].icons), root.iconSize)
+          if (i < root.items.length) left += root.slotWidthFor(root.pickIcon(root.items[i].icons), win.size)
           k++
         }
         // Slot 0 is Files' permanent spot; dragged apps can land anywhere after it.
@@ -1651,25 +1785,33 @@ Item {
       }
 
       function endDrag() {
+        win.autoScrollSpeed = 0
         var from = win.dragFrom
         var to = win.dragTo
         var removing = win.dragRemoving
-        if (removing) {
-          poof.play(dragGhost.x, dragGhost.y, dragGhost.source, dragGhost.width)
-          win.snapShifts = true
-          Qt.callLater(function() { win.snapShifts = false })
-        }
+        if (removing) poof.play(dragGhost.x, dragGhost.y, dragGhost.source, dragGhost.width)
+        // Everything is already where it belongs (the gap opened or closed while dragging),
+        // so the slide-aside offsets are dropped without animating, and a pulled-out icon
+        // goes without its leaving animation.
+        win.snapShifts = true
+        Qt.callLater(function() { win.snapShifts = false })
         win.dragFrom = -1
         win.dragTo = -1
         if (from !== -1 && from < root.items.length) {
           var key = root.items[from].key
-          if (removing) root.unpin(key)
+          if (removing) {
+            var instant = Object.assign({}, root.removeInstantly)
+            instant[key] = true
+            root.removeInstantly = instant
+            root.unpin(key)
+          }
           else if (to !== from) root.moveTo(key, to)
         }
         hideTimer.restart()
       }
 
       function cancelDrag() {
+        win.autoScrollSpeed = 0
         win.dragFrom = -1
         win.dragTo = -1
         hideTimer.restart()
@@ -1759,7 +1901,7 @@ Item {
             yScale: win.previewScaleY
           }
           color: Util.alpha(root.background, 0.65)   // translucent; Hyprland blurs what shows through
-          radius: root.dockRadius
+          radius: root.radiusFor(win.size)
 
           layer.enabled: true
           layer.effect: MultiEffect {
@@ -1778,12 +1920,13 @@ Item {
           // Same arithmetic as the row's own layout (see dockWidthFor), so it updates in the
           // same instant as the icons. While an icon is pulled out to remove, the dock
           // already shrinks around the gap it leaves.
-          width: win.dockWidthFor(root.iconSize) - (win.dragRemoving ? win.dragWidth : 0)
-          height: row.implicitHeight + (root.dockPad + 1) * 2
+          // (A scrolling dock stays full width: it still overflows without the pulled-out icon.)
+          width: Math.min(win.rowWidth - (win.dragRemoving ? win.dragWidth : 0), win.maxDockWidth)
+          height: win.dockHeightFor(win.size)
           color: "transparent"
           border.color: root.hairline
           border.width: 1
-          radius: root.dockRadius
+          radius: root.radiusFor(win.size)
           transform: Scale {
             origin.x: dockBox.width / 2
             origin.y: dockBox.height
@@ -1792,29 +1935,54 @@ Item {
           }
 
           Behavior on y { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          // Animated only while an icon is being dragged, so pulling it out closes the dock
+          // in smoothly (with the icons sliding over). Otherwise the width changes in the same
+          // frame as the icons: animating it then would only make the outline lag behind them
+          // and slide the icons sideways while it re-centers.
           Behavior on width {
-            enabled: !win.applyingResize && !win.snapShifts
+            enabled: win.dragFrom !== -1 && !win.snapShifts
             NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
           }
 
+
+          // The icons, in a view that scrolls sideways only when the dock overflows the
+          // screen (see win.overflowing). Icons fade out toward an edge with more beyond it
+          // (see DockButton's edgeFade).
+          Flickable {
+            id: rowView
+            anchors.fill: parent
+            contentWidth: win.rowWidth
+            contentHeight: height
+            interactive: false
+            boundsBehavior: Flickable.StopAtBounds
+            clip: win.overflowing
+
+            readonly property real maxX: Math.max(0, contentWidth - width)
 
           Row {
             id: row
             // Pinned to the left padding rather than centered, so a dock that shrinks while
             // an icon is pulled out closes in from both ends evenly.
-            x: root.leftPadFor(root.iconSize)
-            anchors.verticalCenter: parent.verticalCenter
+            x: root.leftPadFor(win.size)
+            y: Math.round((rowView.height - implicitHeight) / 2)
             spacing: 0
 
             Repeater {
-              model: root.items
+              model: iconModel
               delegate: DockButton {
-                required property var modelData
-                required property int index
+                required property string key
+                required property bool leaving
+                required property bool appearing
+                // A leaving icon's app is gone from root.items: it keeps its last look.
+                readonly property var liveItem: root.itemsByKey[key] || null
+                property var keptItem: null
+                onLiveItemChanged: if (liveItem) keptItem = liveItem
                 dock: root
                 window: win
-                item: modelData
-                slot: index
+                item: liveItem || keptItem || { key: key, name: "", icons: [root.letterIcon], windows: [], pinned: false }
+                slot: leaving ? -1 : root.layout.indexOf(key)
+                isLeaving: leaving
+                animateIn: appearing
               }
             }
 
@@ -1825,7 +1993,7 @@ Item {
               visible: root.folders.length > 0
               // Wide enough that the gap on each side of the line matches the gap between two
               // icons, like macOS (see dividerWidthFor).
-              width: root.dividerWidthFor(root.iconSize)
+              width: root.dividerWidthFor(win.size)
               // Slides left with the folders while an app is being pulled out to remove.
               transform: Translate {
                 x: win.dragRemoving ? -win.dragWidth : 0
@@ -1834,16 +2002,16 @@ Item {
                   NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
                 }
               }
-              height: root.slotHeightFor(root.iconSize)
+              height: root.slotHeightFor(win.size)
               anchors.verticalCenter: parent.verticalCenter
 
               Rectangle {
                 // The icon before it brings gapRight, the one after it gapLeft; the line
                 // sits so both sides come out the same.
-                x: root.dividerSideFor(root.iconSize) - root.gapRightFor(root.iconSize)
+                x: Math.round(root.dividerSideFor(win.size) - root.gapRightFor(win.size))
                 anchors.verticalCenter: parent.verticalCenter
                 width: 1
-                height: Math.round(root.iconSize * 1.03)      // macOS: a bit taller than the icons
+                height: Math.round(win.size * 1.03)      // macOS: a bit taller than the icons
                 radius: 0.5
                 color: Util.alpha(root.foreground, dividerMouse.containsMouse ? 0.45 : 0.22)
               }
@@ -1859,8 +2027,9 @@ Item {
                 cursorShape: root.dividerResize ? Qt.SizeVerCursor : Qt.ArrowCursor
                 property bool suppressClick: false
                 property bool resizing: false
+                onWheel: function(w) { w.accepted = false }   // scrolling is for the dock
                 property real startScreenY: 0
-                property int startSize: 0
+                property real startSize: 0
 
                 // Pointer height on screen. The dock window grows and shrinks while resizing,
                 // so the pointer's position inside it isn't stable; on screen it is.
@@ -1873,21 +2042,28 @@ Item {
                   if (m.button === Qt.LeftButton && !suppressClick) {
                     resizing = true
                     startScreenY = screenY(m)
-                    startSize = root.iconSize
-                    win.resizePreview = root.iconSize
+                    startSize = win.size
+                    win.resizePreview = 0   // no preview until the pointer moves
                   }
                 }
                 onPositionChanged: function(m) {
                   if (!resizing) return
                   // Up = bigger. One 4 px size step per 4 px dragged.
-                  var size = startSize + Math.round((startScreenY - screenY(m)) / 4) * 4
-                  win.resizePreview = Math.max(32, Math.min(72, size))
+                  // In the Size setting's steps of 4 (the dock may start at a fitted size in
+                  // between), and no bigger than what fits on this screen.
+                  // When no step fits (the dock is already shrunk below the smallest), it can't
+                  // be resized at all, so it stays put.
+                  var size = Math.round((startSize + (startScreenY - screenY(m))) / 4) * 4
+                  var largest = Math.floor(win.fitFor(72) / 4) * 4
+                  win.resizePreview = largest < 32 ? 0 : Math.max(32, Math.min(largest, size))
                 }
                 function finishResize() {
                   if (!resizing) return
                   resizing = false
                   var size = win.resizePreview
-                  if (size > 0 && size !== root.iconSize) {
+                  // Only an actual drag changes the setting (a click on a dock shrunk to fit
+                  // mustn't save the fitted size).
+                  if (size > 0 && size !== startSize && size !== root.iconSize) {
                     win.applyingResize = true
                     root.setSetting("iconSize", size, true)
                     win.resizePreview = 0
@@ -1916,6 +2092,20 @@ Item {
               }
             }
           }
+          }
+
+          // Scrolls the icons when the dock overflows: a layer over the whole dock that only
+          // takes scroll events (wheel or touchpad); clicks, hovering and dropped files pass
+          // through to the icons.
+          MouseArea {
+            anchors.fill: parent
+            enabled: win.overflowing
+            acceptedButtons: Qt.NoButton
+            onWheel: function(e) {
+              var d = e.pixelDelta.x || e.pixelDelta.y || (e.angleDelta.x || e.angleDelta.y) / 2
+              rowView.contentX = Math.max(0, Math.min(rowView.maxX, rowView.contentX - d))
+            }
+          }
         }
       }
 
@@ -1942,18 +2132,18 @@ Item {
           id: dragGhost
           visible: win.dragFrom !== -1
           // Drawn at the same normalized size as in the dock.
-          width: root.drawSizeFor(root.iconSource(win.dragIcon), root.iconSize)
+          width: root.drawSizeFor(root.iconSource(win.dragIcon), win.size)
           height: width
           sourceSize.width: root.iconSourceSize
           sourceSize.height: root.iconSourceSize
           source: win.dragIcon === root.letterIcon ? "" : root.iconSource(win.dragIcon)
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
-          readonly property real restingY: zone.y + dockBox.y + row.y + root.itemPad - 1
-            + Math.round((root.iconSize - height) / 2)
+          readonly property real restingY: zone.y + dockBox.y + row.y + root.padFor(win.size) - 1
+            + Math.round((win.size - height) / 2)
           // The visible artwork (not the padded square) stays centered under the pointer.
-          readonly property real artOffset: root.artOffsetFor(root.iconSource(win.dragIcon), root.iconSize)
-          readonly property real artOffsetY: root.artOffsetYFor(root.iconSource(win.dragIcon), root.iconSize)
+          readonly property real artOffset: root.artOffsetFor(root.iconSource(win.dragIcon), win.size)
+          readonly property real artOffsetY: root.artOffsetYFor(root.iconSource(win.dragIcon), win.size)
           x: win.dragRemoving
             ? win.dragSceneX - width / 2 + artOffset
             : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset))

@@ -12,11 +12,27 @@ Item {
   required property var item
   property bool isFolder: false
   property int slot: -1                  // position in the app row (apps only)
+  property bool isLeaving: false         // closing: shrinks away, then is removed
+  property bool animateIn: false         // just opened: grows in
+
+  // 0..1: how far this icon's slot is open. Opening apps grow from 0, closing ones shrink
+  // to 0; the icons beside them slide along and the dock widens or narrows with them.
+  property real appear: animateIn ? 0 : 1
+  NumberAnimation {
+    id: appearAnimation
+    target: button
+    property: "appear"
+    duration: 180
+    easing.type: Easing.OutCubic
+    onFinished: if (button.isLeaving) button.dock.finishLeaving(button.item.key)
+  }
+  Component.onCompleted: if (animateIn) { appearAnimation.to = 1; appearAnimation.start() }
+  onIsLeavingChanged: if (isLeaving) { appearAnimation.stop(); appearAnimation.to = 0; appearAnimation.start() }
 
   readonly property bool running: !isFolder && item.windows.length > 0
   readonly property bool launching: !isFolder && dock.isLaunching(item.key)
   readonly property bool acceptsFiles: dock.acceptsDrop(item, isFolder)
-  readonly property bool beingDragged: !isFolder && window.dragFrom === slot
+  readonly property bool beingDragged: !isFolder && slot !== -1 && window.dragFrom === slot
   readonly property string label: item.name || ""
   // Apps pick the first of their icon candidates that works (see "icon fallbacks").
   readonly property string iconUrl: isFolder ? dock.iconSource(item.icon) : dock.pickIcon(item.icons)
@@ -26,8 +42,8 @@ Item {
   // The artwork is scaled to look as big as the others ("size normalization" in Dock.qml)
   // and each slot is as wide as the scaled artwork plus one gap ("spacing"), with the
   // artwork nudged so its visible middle sits mid-slot.
-  readonly property int drawSize: dock.drawSizeFor(slotUrl, dock.iconSize)
-  readonly property int artOffsetY: dock.artOffsetYFor(slotUrl, dock.iconSize)
+  readonly property int drawSize: dock.drawSizeFor(slotUrl, window.size)
+  readonly property int artOffsetY: dock.artOffsetYFor(slotUrl, window.size)
 
   // While another icon is dragged, slide aside (by the dragged icon's slot width) to open
   // a gap where it would land. While it's being pulled out to remove, close up the gap it
@@ -43,9 +59,23 @@ Item {
     return 0
   }
 
-  width: dock.slotWidthFor(slotUrl, dock.iconSize)
-  height: dock.iconSize + dock.itemPad * 2
-  opacity: beingDragged ? 0 : 1
+  readonly property real fullWidth: dock.slotWidthFor(slotUrl, window.size)
+  width: fullWidth * appear
+  enabled: !isLeaving
+  height: dock.slotHeightFor(window.size)
+  opacity: beingDragged ? 0 : edgeFade
+
+  // When the dock scrolls (too many icons for the screen), icons fade out as they near an
+  // edge that has more icons beyond it: fully faded at the edge, over one icon's width.
+  readonly property real edgeFade: {
+    if (!window.overflowing) return 1
+    // Where the icon is on screen: including its slide while another icon is dragged.
+    var mid = window.rowX + x + dragShift + width / 2 - window.scrollX
+    var fade = 1
+    if (window.scrollX > 0.5) fade = Math.min(fade, mid / width)
+    if (window.scrollX < window.scrollMax - 0.5) fade = Math.min(fade, (window.viewWidth - mid) / width)
+    return Math.max(0, Math.min(1, fade))
+  }
 
   transform: Translate {
     x: button.dragShift
@@ -64,16 +94,19 @@ Item {
   // Like macOS, the pile is drawn to fit the slot rather than the slot growing to fit the
   // pile: it never gets wider than the slot's artwork (a document icon's width), so the
   // gaps stay even and nothing shifts when a wider file (a landscape photo) arrives.
-  readonly property real artWidth: dock.artWidthFor(slotUrl, dock.iconSize)
+  readonly property real artWidth: dock.artWidthFor(slotUrl, window.size)
 
   // Like the macOS dock: no hover highlight (the name label shows instead),
   // and the icon dims briefly while pressed.
   Item {
     id: iconBox
     // The artwork's visible left edge sits exactly gapLeft into the slot (see "spacing").
-    x: dock.iconExtents[button.slotUrl]
-      ? dock.gapLeftFor(dock.iconSize) - dock.artLeftFor(button.slotUrl, dock.iconSize)
-      : Math.round((button.width - width) / 2)
+    // (While the slot grows in or shrinks away, the icon stays centered in it and scales
+    // with it.)
+    x: (dock.iconExtents[button.slotUrl]
+      ? dock.gapLeftFor(window.size) - dock.artLeftFor(button.slotUrl, window.size)
+      : Math.round((button.fullWidth - width) / 2)) - (1 - button.appear) * button.fullWidth / 2
+    scale: button.appear
     anchors.verticalCenter: parent.verticalCenter
     anchors.verticalCenterOffset: -1 + button.artOffsetY
     width: button.drawSize
@@ -129,7 +162,7 @@ Item {
   SequentialAnimation {
     running: button.launching && button.dock.animateLaunch
     loops: Animation.Infinite
-    NumberAnimation { target: bounce; property: "y"; to: -Math.round(dock.iconSize * 0.33); duration: 280; easing.type: Easing.OutQuad }
+    NumberAnimation { target: bounce; property: "y"; to: -Math.round(window.size * 0.33); duration: 280; easing.type: Easing.OutQuad }
     NumberAnimation { target: bounce; property: "y"; to: 0; duration: 280; easing.type: Easing.InQuad }
     PauseAnimation { duration: 80 }
     onRunningChanged: if (!running) bounce.y = 0
@@ -139,7 +172,7 @@ Item {
   // (4 px at 60 px icons, like macOS; never smaller than 3 px).
   Rectangle {
     visible: button.running
-    width: Math.max(3, Math.round(dock.iconSize / 15))
+    width: Math.max(3, Math.round(window.size / 15))
     height: width
     radius: width / 2
     anchors.horizontalCenter: parent.horizontalCenter
@@ -160,6 +193,9 @@ Item {
     property bool dragging: false
     property bool suppressClick: false
     readonly property int dragThreshold: 8
+
+    // Scrolling is for the dock (when it overflows), not for the icon.
+    onWheel: function(w) { w.accepted = false }
 
     onEntered: button.window.showTip(button, button.label)
     onExited: button.window.hideTip(button)

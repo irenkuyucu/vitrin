@@ -34,8 +34,8 @@ Item {
     height: fileIcon.size - 6
     fillMode: Image.PreserveAspectFit
     source: fileIcon.thumbnail ? Util.fileUrl(fileIcon.file.path) : ""
-    sourceSize.width: fileIcon.size * 2
-    sourceSize.height: fileIcon.size * 2
+    sourceSize.width: fileIcon.dock.iconSourceSize
+    sourceSize.height: fileIcon.dock.iconSourceSize
     asynchronous: true
     smooth: true
   }
@@ -44,8 +44,8 @@ Item {
     visible: !fileIcon.thumbnail || thumb.status === Image.Error
     anchors.fill: parent
     source: fileIcon.file ? fileIcon.dock.iconSource(fileIcon.file.icon) : ""
-    sourceSize.width: fileIcon.size * 2
-    sourceSize.height: fileIcon.size * 2
+    sourceSize.width: fileIcon.dock.iconSourceSize
+    sourceSize.height: fileIcon.dock.iconSourceSize
     fillMode: Image.PreserveAspectFit
     asynchronous: true
     smooth: true

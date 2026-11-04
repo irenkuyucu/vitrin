@@ -75,8 +75,8 @@ Item {
     Image {
       visible: !button.showStack
       anchors.fill: parent
-      sourceSize.width: dock.iconSize * 2
-      sourceSize.height: dock.iconSize * 2
+      sourceSize.width: dock.iconSourceSize
+      sourceSize.height: dock.iconSourceSize
       source: dock.iconSource(button.item.icon)
       fillMode: Image.PreserveAspectFit
       smooth: true

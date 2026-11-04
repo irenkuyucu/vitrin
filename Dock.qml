@@ -47,6 +47,9 @@ Item {
   // Look and feel. Shapes follow the GNOME/Adwaita conventions the Files app uses
   // (rounded surfaces, hairline borders, soft shadows); colors follow the Omarchy theme.
   // Spacing and corner rounding scale with the icon size (48 px -> 6 px padding, 16 px corners).
+  // Every icon is loaded once at the resolution the largest dock needs (2x for sharpness),
+  // so changing the size only scales already-loaded images instead of reloading them.
+  readonly property int iconSourceSize: 144
   readonly property int itemPad: Math.round(iconSize / 8)
   readonly property int dockPad: Math.round(iconSize / 8)
   readonly property int edgeMargin: 6
@@ -873,7 +876,12 @@ Item {
       screen: modelData
 
       anchors { left: true; right: true; bottom: true }
-      implicitHeight: zone.height
+      // The window is always as tall as the largest dock needs, whatever the current size.
+      // Resizing a layer window is a round trip with the compositor, and while it's in flight
+      // the bottom-anchored dock gets drawn for one height in a window of another, so it
+      // visibly jumps. With a fixed height, resizing the dock (divider, slider) never resizes
+      // the window. The extra space is transparent and takes no input (see mask).
+      implicitHeight: dockHeightFor(72) + root.edgeMargin + root.hoverSlack
       color: "transparent"
       // With hiding off the dock is always visible, so windows make room for it
       // (like macOS); with hiding on it floats over them.
@@ -963,6 +971,26 @@ Item {
 
       // Files dragged over the dock from another app (Files, browser, ...)
       property int dropDepth: 0
+
+      // Divider resizing: while dragging, the dock is only scaled visually (cheap: no
+      // re-layout, no window resize per step); the real size is applied once on release.
+      property int resizePreview: 0          // previewed icon size; 0 = not resizing
+
+      // The dock's exact width and height at a given icon size (same arithmetic as the real
+      // layout), so the preview lands exactly where the real dock will be on release.
+      function slotFor(size) { return size + Math.round(size / 8) * 2 }
+      function dockWidthFor(size) {
+        var slot = slotFor(size)
+        var divider = root.folders.length > 0 ? Math.round(slot / 3) : 0
+        return (root.items.length + root.folders.length) * slot + divider + (Math.round(size / 8) + 1) * 2
+      }
+      function dockHeightFor(size) { return slotFor(size) + (Math.round(size / 8) + 1) * 2 }
+      readonly property real previewScaleX: resizePreview > 0 ? dockWidthFor(resizePreview) / dockWidthFor(root.iconSize) : 1
+      readonly property real previewScaleY: resizePreview > 0 ? dockHeightFor(resizePreview) / dockHeightFor(root.iconSize) : 1
+
+      // Set while a resize is being applied, so the width animation (meant for apps opening
+      // and closing) doesn't start from the old width and make the dock jump.
+      property bool applyingResize: false
 
       // Hidden: only a thin strip at the bottom edge takes the pointer.
       // Shown: the dock plus some slack around it, down to the screen edge.
@@ -1221,6 +1249,12 @@ Item {
           y: dockBox.y
           width: dockBox.width
           height: dockBox.height
+          transform: Scale {
+            origin.x: dockBox.width / 2
+            origin.y: dockBox.height
+            xScale: win.previewScaleX
+            yScale: win.previewScaleY
+          }
           color: Util.alpha(root.background, 0.65)   // translucent; Hyprland blurs what shows through
           radius: root.dockRadius
 
@@ -1244,9 +1278,18 @@ Item {
           border.color: root.hairline
           border.width: 1
           radius: root.dockRadius
+          transform: Scale {
+            origin.x: dockBox.width / 2
+            origin.y: dockBox.height
+            xScale: win.previewScaleX
+            yScale: win.previewScaleY
+          }
 
           Behavior on y { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-          Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+          Behavior on width {
+            enabled: !win.applyingResize
+            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+          }
 
 
           Row {
@@ -1316,27 +1359,31 @@ Item {
                     resizing = true
                     startScreenY = screenY(m)
                     startSize = root.iconSize
+                    win.resizePreview = root.iconSize
                   }
                 }
                 onPositionChanged: function(m) {
                   if (!resizing) return
                   // Up = bigger. One 4 px size step per 4 px dragged.
                   var size = startSize + Math.round((startScreenY - screenY(m)) / 4) * 4
-                  size = Math.max(32, Math.min(72, size))
-                  if (size !== root.iconSize) root.setSetting("iconSize", size, false)
+                  win.resizePreview = Math.max(32, Math.min(72, size))
                 }
-                onReleased: function(m) {
+                function finishResize() {
                   if (!resizing) return
                   resizing = false
-                  if (root.iconSize !== startSize) root.saveConfig()
+                  var size = win.resizePreview
+                  if (size > 0 && size !== root.iconSize) {
+                    win.applyingResize = true
+                    root.setSetting("iconSize", size, true)
+                    win.resizePreview = 0
+                    Qt.callLater(function() { win.applyingResize = false })
+                  } else {
+                    win.resizePreview = 0
+                  }
                   hideTimer.restart()
                 }
-                onCanceled: {
-                  if (resizing) {
-                    resizing = false
-                    if (root.iconSize !== startSize) root.saveConfig()
-                  }
-                }
+                onReleased: function(m) { finishResize() }
+                onCanceled: finishResize()
                 onClicked: function(m) {
                   if (m.button === Qt.RightButton && !suppressClick) win.openDockMenu(divider)
                 }
@@ -1381,8 +1428,8 @@ Item {
           visible: win.dragFrom !== -1
           width: root.iconSize
           height: root.iconSize
-          sourceSize.width: root.iconSize * 2
-          sourceSize.height: root.iconSize * 2
+          sourceSize.width: root.iconSourceSize
+          sourceSize.height: root.iconSourceSize
           source: root.iconSource(win.dragIcon)
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
@@ -1421,8 +1468,8 @@ Item {
           visible: false
           width: root.iconSize
           height: root.iconSize
-          sourceSize.width: root.iconSize * 2
-          sourceSize.height: root.iconSize * 2
+          sourceSize.width: root.iconSourceSize
+          sourceSize.height: root.iconSourceSize
           smooth: true
 
           function play(px, py, src) {

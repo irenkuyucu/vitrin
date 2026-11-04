@@ -18,7 +18,9 @@ Item {
   readonly property bool acceptsFiles: dock.acceptsDrop(item, isFolder)
   readonly property bool beingDragged: !isFolder && window.dragFrom === slot
   readonly property string label: item.name || ""
-  readonly property string iconUrl: dock.iconSource(item.icon)
+  // Apps pick the first of their icon candidates that works (see "icon fallbacks").
+  readonly property string iconUrl: isFolder ? dock.iconSource(item.icon) : dock.pickIcon(item.icons)
+  readonly property bool letterIcon: iconUrl === dock.letterIcon
   readonly property string slotUrl: dock.slotSourceFor(item, isFolder)
 
   // The artwork is scaled to look as big as the others ("size normalization" in Dock.qml)
@@ -86,14 +88,21 @@ Item {
     transform: Translate { id: bounce; y: 0 }
 
     Image {
-      visible: !button.showStack
+      visible: !button.showStack && !button.letterIcon
       anchors.fill: parent
       sourceSize.width: dock.iconSourceSize
       sourceSize.height: dock.iconSourceSize
-      source: button.iconUrl
+      source: button.letterIcon ? "" : button.iconUrl
       fillMode: Image.PreserveAspectFit
       smooth: true
       asynchronous: true
+    }
+
+    LetterIcon {
+      visible: button.letterIcon
+      anchors.fill: parent
+      name: button.label
+      size: button.drawSize
     }
 
     // The pile: oldest of the three at the back, slightly turned; newest on top.
@@ -168,7 +177,7 @@ Item {
       if (button.isFolder || button.dock.isFixed(button.item.key) || !(m.buttons & Qt.LeftButton)) return
       if (!dragging && Math.abs(m.x - pressX) + Math.abs(m.y - pressY) > dragThreshold) {
         dragging = true
-        button.window.beginDrag(button.slot, button.item.icon)
+        button.window.beginDrag(button.slot, button.iconUrl)
       }
       if (dragging) button.window.updateDrag(mapToItem(button.window.dragRow, m.x, m.y))
     }

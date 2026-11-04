@@ -333,9 +333,142 @@ Item {
   }
 
   // ------------------------------------------------------------ apps & windows
+  // Which app (desktop entry) a window belongs to. Most windows match by id; the later
+  // steps are fallbacks for apps whose window id doesn't match their entry (and whose entry
+  // has no StartupWMClass), e.g. LocalSend: window "org.localsend.localsend_app", entry
+  // "localsend.desktop". In order:
+  //   1. exact id, Omarchy web apps, Quickshell's fuzzy lookup (certainEntryFor)
+  //   2. clues from the window's process (hintEntryFor, see scripts/window-hints.sh)
+  //   3. the id's dotted parts (looseEntryFor)
+  // Windows of apps launched from the dock are also remembered (see learnFromLaunch), and
+  // "aliases" in the config file override all of this.
   function entryFor(appId) {
     if (!appId) return null
+    return certainEntryFor(appId) || hintEntryFor(appId) || looseEntryFor(appId) || null
+  }
+
+  function certainEntryFor(appId) {
     return DesktopEntries.byId(appId) || webAppEntryFor(appId) || DesktopEntries.heuristicLookup(appId) || null
+  }
+
+  // Words that say nothing about which app something is.
+  readonly property var vendorWords: ["org", "com", "net", "io", "dev", "app", "desktop", "github", "gitlab"]
+  readonly property var genericWords: ["bin", "lib", "usr", "opt", "share", "program", "libexec", "exe",
+    "electron", "java", "python", "python3", "wine", "flatpak", "snap", "client", "gui"]
+
+  // Lowercase words of 3+ letters in a string, minus the meaningless ones.
+  function wordsOf(text) {
+    return String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(function(w) {
+      return w.length >= 3 && root.vendorWords.indexOf(w) === -1 && root.genericWords.indexOf(w) === -1
+    })
+  }
+
+  function baseName(path) { return String(path || "").split("/").pop() }
+  function dirName(path) { var p = String(path || "").split("/"); return p.length > 1 ? p[p.length - 2] : "" }
+
+  // The program an entry runs: the first word of its Exec line that isn't "env" or a
+  // VAR=value, without its folder ("/usr/bin/localsend %U" -> "localsend").
+  function execNameOf(entry) {
+    var words = String(entry.execString || "").split(/\s+/)
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i].replace(/^["']|["']$/g, "")
+      if (!w || w === "env" || w.indexOf("=") !== -1) continue
+      return baseName(w).toLowerCase()
+    }
+    return ""
+  }
+
+  // Step 2: clues from the window's process. The entry it was launched from counts only if
+  // it shares a word with the window's id or program, because launch clues are inherited
+  // (an app started from a terminal carries the terminal's), and some apps run several
+  // windows from one process (LibreOffice's Calc window reports Writer's entry).
+  // Otherwise, an entry whose id or program is the window's program.
+  property var windowHints: ({})       // app id -> { launched, exe, cmd }, filled in on demand
+
+  function hintEntryFor(appId) {
+    var h = root.windowHints[appId]
+    if (!h) return null
+    var programs = [baseName(h.exe), dirName(h.exe), baseName(h.cmd)]
+      .filter(function(n) { return !!n }).map(function(n) { return n.toLowerCase() })
+    var windowWords = wordsOf(appId).concat(wordsOf(programs.join(" ")))
+    if (h.launched) {
+      var launched = DesktopEntries.byId(h.launched)
+      if (launched) {
+        var entryWords = wordsOf(launched.id + " " + launched.name + " " + execNameOf(launched))
+        for (var w = 0; w < entryWords.length; w++) if (windowWords.indexOf(entryWords[w]) !== -1) return launched
+      }
+    }
+    var apps = DesktopEntries.applications.values
+    for (var a = 0; a < apps.length; a++) {
+      var id = String(apps[a].id).toLowerCase()
+      var exec = execNameOf(apps[a])
+      for (var p = 0; p < programs.length; p++) {
+        if (programs[p] === id || (exec && programs[p] === exec)) return apps[a]
+      }
+    }
+    return null
+  }
+
+  // Asks scripts/window-hints.sh about windows that don't match for certain, one at a time.
+  property var hintQueue: []
+  Process {
+    id: hintFinder
+    property string appId: ""
+    stdout: StdioCollector {
+      onStreamFinished: root.applyHints(hintFinder.appId, text)
+    }
+    onRunningChanged: if (!running) Qt.callLater(root.nextHint)
+  }
+
+  function requestHints(appId) {
+    if (root.windowHints[appId] !== undefined || root.hintQueue.indexOf(appId) !== -1) return
+    root.hintQueue = root.hintQueue.concat([appId])
+    nextHint()
+  }
+
+  function nextHint() {
+    if (hintFinder.running || root.hintQueue.length === 0) return
+    hintFinder.appId = root.hintQueue[0]
+    hintFinder.command = ["bash", root.script("window-hints.sh"), hintFinder.appId]
+    hintFinder.running = true
+  }
+
+  property var reportedUnmatched: ({})
+  function applyHints(appId, text) {
+    var lines = String(text).split("\n")
+    var hints = Object.assign({}, root.windowHints)
+    hints[appId] = { launched: lines[0] || "", exe: lines[1] || "", cmd: lines[2] || "" }
+    root.windowHints = hints
+    root.hintQueue = root.hintQueue.filter(function(id) { return id !== appId })
+    // Still no app: say so once, with the fix.
+    if (!entryFor(appId) && !root.reportedUnmatched[appId]) {
+      root.reportedUnmatched[appId] = true
+      console.warn(root.pluginId + ": no app found for windows with id \"" + appId + "\". To fix it, add "
+        + "\"aliases\": { \"" + appId + "\": \"<desktop entry id>\" } to " + root.configPath)
+    }
+  }
+
+  // Step 3: the id's dotted parts, from last to first, also without a trailing
+  // "_app"/"-bin"/..., against entry ids and app names.
+  function looseEntryFor(appId) {
+    var parts = String(appId).toLowerCase().split(".")
+    var candidates = []
+    for (var i = parts.length - 1; i >= 0; i--) {
+      var part = parts[i]
+      if (!part || root.vendorWords.indexOf(part) !== -1) continue
+      candidates.push(part)
+      var stripped = part.replace(/[-_](app|bin|desktop|client|gui)$/, "")
+      if (stripped !== part) candidates.push(stripped)
+    }
+    var apps = DesktopEntries.applications.values
+    for (var c = 0; c < candidates.length; c++) {
+      var entry = DesktopEntries.byId(candidates[c])
+      if (entry) return entry
+      for (var a = 0; a < apps.length; a++) {
+        if (String(apps[a].name).toLowerCase().replace(/\s+/g, "") === candidates[c]) return apps[a]
+      }
+    }
+    return null
   }
 
   // Omarchy web apps (WhatsApp, HEY, YouTube, ...) are entries that run
@@ -376,8 +509,81 @@ Item {
   function iconSource(name) {
     var fallback = Quickshell.iconPath("application-x-executable", true)
     if (!name) return fallback
-    if (String(name).charAt(0) === "/") return Util.fileUrl(name)
+    name = String(name)
+    if (name.indexOf("://") !== -1 || name === root.letterIcon) return name   // already resolved
+    if (name.charAt(0) === "/") return Util.fileUrl(name)
     return Quickshell.iconPath(name, true) || fallback
+  }
+
+  // ------------------------------------------------------------ icon fallbacks
+  // An app's icon is the first of these that exists and loads (icons that fail to load are
+  // found out by the measurer, which marks them false in iconExtents): the entry's Icon=,
+  // the same in lowercase, a missing Icon= file's name looked up in the theme, the entry's
+  // id, the window id and its parts, then /usr/share/pixmaps (where older apps put icons).
+  // Last comes a letter tile (see LetterIcon.qml), so an app is never left without an icon
+  // or under the same generic icon as every other unknown app.
+  readonly property string letterIcon: "vitrin:letter"
+
+  function iconCandidatesFor(entry, key) {
+    var names = []
+    var pixmapNames = []
+    if (entry) {
+      var icon = String(entry.icon || "")
+      if (icon) {
+        names.push(icon)
+        if (icon.charAt(0) === "/") names.push(baseName(icon).replace(/\.[a-z]+$/i, ""))
+        else names.push(icon.toLowerCase())
+        pixmapNames.push(icon.charAt(0) === "/" ? "" : icon)
+      }
+      names.push(String(entry.id))
+      pixmapNames.push(String(entry.id))
+    }
+    names.push(String(key))
+    var parts = String(key).split(".")
+    for (var i = parts.length - 1; i >= 0; i--) {
+      if (!parts[i] || root.vendorWords.indexOf(parts[i].toLowerCase()) !== -1) continue
+      names.push(parts[i], parts[i].toLowerCase().replace(/[-_](app|bin|desktop|client|gui)$/, ""))
+    }
+    var urls = []
+    function add(url) { if (url && urls.indexOf(url) === -1) urls.push(url) }
+    for (var n = 0; n < names.length; n++) {
+      if (!names[n]) continue
+      if (names[n].charAt(0) === "/") add(Util.fileUrl(names[n]))
+      else add(Quickshell.iconPath(names[n], true))
+    }
+    // Pixmaps only for the entry's own names, and only when the theme lacks them.
+    for (var m = 0; m < pixmapNames.length; m++) {
+      if (!pixmapNames[m] || Quickshell.iconPath(pixmapNames[m], true)) continue
+      add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".png")
+      add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".svg")
+      add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".xpm")
+    }
+    urls.push(root.letterIcon)
+    return urls
+  }
+
+  // The first candidate not known to be broken.
+  function pickIcon(candidates) {
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i] === root.letterIcon || root.iconExtents[candidates[i]] !== false) return candidates[i]
+    }
+    return root.letterIcon
+  }
+
+  // A readable name for a window that matches no app: "org.localsend.localsend_app" ->
+  // "Localsend", or the window's title when it's the same name, properly written
+  // ("LocalSend").
+  function prettyName(appId, windows) {
+    var parts = String(appId).split(".").filter(function(p) {
+      return p && root.vendorWords.indexOf(p.toLowerCase()) === -1
+    })
+    var last = (parts.length ? parts[parts.length - 1] : String(appId)).replace(/[-_](app|bin|desktop|client|gui)$/i, "")
+    var pretty = last.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[-_\s]+/).filter(function(w) { return !!w })
+      .map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(" ") || String(appId)
+    function squash(t) { return String(t).toLowerCase().replace(/[^a-z0-9]/g, "") }
+    var title = windows.length ? String(windows[0].title || "") : ""
+    if (title && title.length <= 30 && squash(title) === squash(pretty)) return title
+    return pretty
   }
 
   // ------------------------------------------------------------ spacing
@@ -390,7 +596,8 @@ Item {
 
   // source url -> { l, r } (visible left/right edge as fractions of the icon's width),
   // or false when it couldn't be measured.
-  property var iconExtents: ({})
+  // The letter tile (see LetterIcon.qml) is a rounded square 81% of the icon's width.
+  property var iconExtents: ({ "vitrin:letter": { l: 0.095, r: 0.905, L: 0.095, R: 0.905, t: 0.095, b: 0.905, hull: 0.6561 } })
   property var measureQueue: []
 
   // The gaps and end spaces are set for 52 px icons (the default size) and scale in
@@ -502,7 +709,7 @@ Item {
   // one width as files come and go.
   function slotSourceFor(item, isFolder) {
     if (isFolder && root.displayAsFor(item) === "stack") return root.iconSource("text-x-generic")
-    return root.iconSource(item.icon)
+    return isFolder ? root.iconSource(item.icon) : root.pickIcon(item.icons)
   }
 
   // Every slot's sizing icon, apps then folders.
@@ -537,9 +744,10 @@ Item {
   }
 
   // Open windows grouped by app: { byKey: { key: [toplevel, ...] }, order: [key, ...] }.
-  readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values, root.effectiveAliases)
+  readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values,
+    root.effectiveAliases, root.windowHints)
 
-  function computeGroups(toplevels, _apps, _aliases) {
+  function computeGroups(toplevels, _apps, _aliases, _hints) {
     var byKey = {}
     var order = []
     for (var i = 0; i < toplevels.length; i++) {
@@ -557,7 +765,59 @@ Item {
 
   onGroupsChanged: {
     syncLayout()
+    noteUnmatched()
+    learnFromLaunch()
     settleLaunching()
+  }
+
+  // Windows that don't match an app for certain: ask their process for clues, and note when
+  // they first appeared (for learnFromLaunch).
+  // Clues are forgotten once all of an id's windows have closed, so the next window with
+  // that id is looked at afresh (it may be a different program).
+  property var firstSeen: ({})
+  function noteUnmatched() {
+    var toplevels = ToplevelManager.toplevels.values
+    var open = {}
+    for (var i = 0; i < toplevels.length; i++) {
+      var appId = toplevels[i] && toplevels[i].appId
+      if (!appId) continue
+      var target = root.effectiveAliases[appId] || appId
+      open[target] = true
+      if (certainEntryFor(target)) continue
+      if (root.firstSeen[target] === undefined) root.firstSeen[target] = Date.now()
+      requestHints(target)
+    }
+    var stale = Object.keys(root.windowHints).filter(function(id) {
+      return !open[id] && root.hintQueue.indexOf(id) === -1
+    })
+    if (stale.length === 0) return
+    var hints = Object.assign({}, root.windowHints)
+    for (var s = 0; s < stale.length; s++) {
+      delete hints[stale[s]]
+      delete root.firstSeen[stale[s]]
+      delete root.reportedUnmatched[stale[s]]
+    }
+    root.windowHints = hints
+  }
+
+  // Learning from launches: when the dock is starting exactly one app, and a window that
+  // matches no app appears meanwhile, that window belongs to the app being started. Saved
+  // under "aliases" in the config file (where it can be corrected), so it matches for
+  // certain from then on.
+  function learnFromLaunch() {
+    var starting = Object.keys(root.launching).filter(function(k) { return !root.groups.byKey[k] })
+    if (starting.length !== 1) return
+    var since = root.launching[starting[0]].at
+    var fresh = root.groups.order.filter(function(k) {
+      return !entryFor(k) && root.firstSeen[k] !== undefined && root.firstSeen[k] >= since
+    })
+    if (fresh.length !== 1 || root.aliases[fresh[0]] !== undefined) return
+    var next = Object.assign({}, root.aliases)
+    next[fresh[0]] = starting[0]
+    console.log(root.pluginId + ": windows with id \"" + fresh[0] + "\" belong to \"" + starting[0]
+      + "\" (learned from launching it; saved under \"aliases\" in " + root.configPath + ")")
+    root.aliases = next
+    saveConfig()
   }
   onPinsChanged: syncLayout()
 
@@ -594,13 +854,14 @@ Item {
 
   readonly property var items: root.layout.map(function(key) {
     var entry = DesktopEntries.byId(key) || entryFor(key)
+    var windows = root.groups.byKey[key] || []
     return {
       key: key,
       entry: entry,
-      name: isTerminal(key) ? "Terminal" : (entry ? entry.name : key),
-      icon: entry ? entry.icon : key,
+      name: isTerminal(key) ? "Terminal" : (entry ? entry.name : prettyName(key, windows)),
+      icons: iconCandidatesFor(entry, key),     // see pickIcon
       pinned: root.pins.indexOf(key) !== -1,
-      windows: root.groups.byKey[key] || []
+      windows: windows
     }
   })
 
@@ -1114,7 +1375,8 @@ Item {
       property int dragFrom: -1
       property int dragTo: -1
       property real dragX: 0
-      property string dragIcon: ""
+      property string dragIcon: ""            // icon url (or the letter tile)
+      property string dragName: ""
       property int dragWidth: 0               // slot width of the dragged icon
       // Set for the moment a pulled-out icon is removed: everything is already where it
       // belongs, so the slide-aside offsets are dropped without animating.
@@ -1294,6 +1556,7 @@ Item {
         var item = root.items[index]
         win.tipText = ""
         win.dragIcon = icon
+        win.dragName = item ? item.name : ""
         win.dragWidth = root.slotWidthFor(root.iconSource(icon), root.iconSize)
         // Running apps (even pinned ones) only slide sideways; unpin those from their menu.
         win.dragRemovable = !!item && item.pinned && !root.isFixed(item.key) && item.windows.length === 0
@@ -1317,7 +1580,7 @@ Item {
           if (i === win.dragFrom) continue
           var distance = Math.abs(point.x - (left + win.dragWidth / 2))
           if (distance < bestDistance) { bestDistance = distance; best = k }
-          if (i < root.items.length) left += root.slotWidthFor(root.iconSource(root.items[i].icon), root.iconSize)
+          if (i < root.items.length) left += root.slotWidthFor(root.pickIcon(root.items[i].icons), root.iconSize)
           k++
         }
         // Slot 0 is Files' permanent spot; dragged apps can land anywhere after it.
@@ -1620,7 +1883,7 @@ Item {
           height: width
           sourceSize.width: root.iconSourceSize
           sourceSize.height: root.iconSourceSize
-          source: root.iconSource(win.dragIcon)
+          source: win.dragIcon === root.letterIcon ? "" : root.iconSource(win.dragIcon)
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
           readonly property real restingY: zone.y + dockBox.y + row.y + root.itemPad - 1
@@ -1634,6 +1897,15 @@ Item {
           y: dragLayer.offsetY + artOffsetY
              + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
           opacity: win.dragRemoving ? 0.7 : 1
+        }
+
+        LetterIcon {
+          visible: dragGhost.visible && win.dragIcon === root.letterIcon
+          x: dragGhost.x
+          y: dragGhost.y
+          name: win.dragName
+          size: dragGhost.width
+          opacity: dragGhost.opacity
         }
 
         // "Remove" label above the icon once it's far enough out.

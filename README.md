@@ -76,7 +76,8 @@ changes when the file is saved.
     { "name": "Trash", "icon": "user-trash", "path": "trash:///" }
   ],
   // Put one app's windows under another app's icon:
-  // { "<window app id>": "<desktop entry id>" }. Rarely needed.
+  // { "<window app id>": "<desktop entry id>" }. Rarely needed; Vitrin also adds
+  // entries here itself when it works out which app an unrecognized window belongs to.
   "aliases": {}
 }
 ```
@@ -100,11 +101,23 @@ hl.layer_rule({ match = { namespace = "^vitrin$" }, blur = true, ignore_alpha = 
 
 Blur costs GPU time; on older machines, check that the dock still slides up smoothly.
 
+## If an app shows the wrong icon or name
+
+Some apps' windows don't identify themselves the way their desktop entry says (for
+example LocalSend's windows are `org.localsend.localsend_app`, its entry `localsend`).
+Vitrin then tries, in order: clues from the window's process (the entry it was launched
+from, its program), the parts of its id, and what it learned from launching it from the
+dock. An app it still can't place shows under a tile with its initial and a name made from
+its id, and the shell log says which id to add to `aliases`, for example:
+
+```json
+"aliases": { "org.localsend.localsend_app": "localsend" }
+```
+
+The shell log is at `/run/user/$UID/quickshell/by-id/*/log.qslog` (read it with `qs log`).
+
 ## Known limitations
 
-- An app whose windows don't identify themselves the way its desktop entry says (a wrong
-  or missing `StartupWMClass`) shows a second icon while running, and keeps bouncing for
-  12 seconds when launched from the dock. An `aliases` entry fixes it.
 - With hiding off, Omarchy's volume/brightness pop-up overlaps the top of the dock.
 - In full-screen games, pushing the pointer to the bottom edge brings up the dock (as on
   macOS). Games that capture the pointer aren't affected.

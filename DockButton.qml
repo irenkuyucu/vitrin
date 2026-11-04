@@ -125,7 +125,7 @@ Item {
       anchors.fill: parent
       sourceSize.width: dock.iconSourceSize
       sourceSize.height: dock.iconSourceSize
-      source: button.letterIcon ? "" : button.iconUrl
+      source: dock.displayableIcon(button.iconUrl)   // (see displayableIcon)
       fillMode: Image.PreserveAspectFit
       smooth: true
       asynchronous: true

@@ -625,6 +625,16 @@ Item {
   }
 
   // The first candidate not known to be broken.
+  // What an icon Image may show: theme icons at once (the theme lookup only returns icons
+  // that exist), image files only once the measurer has loaded them. The measurer loads
+  // silently, so a missing file (a fallback candidate, or a stale Icon= path) is skipped
+  // without an Image ever trying it and printing "Cannot open" to the shell log.
+  function displayableIcon(url) {
+    url = String(url || "")
+    if (url === root.letterIcon) return ""
+    return url.indexOf("image://") === 0 || root.iconExtents[url] ? url : ""
+  }
+
   function pickIcon(candidates) {
     for (var i = 0; i < candidates.length; i++) {
       if (candidates[i] === root.letterIcon || root.iconExtents[candidates[i]] !== false) return candidates[i]
@@ -2279,7 +2289,7 @@ Item {
           height: width
           sourceSize.width: root.iconSourceSize
           sourceSize.height: root.iconSourceSize
-          source: win.dragIcon === root.letterIcon ? "" : root.iconSource(win.dragIcon)
+          source: root.displayableIcon(root.iconSource(win.dragIcon))
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
           readonly property real restingY: zone.y + dockBox.y + row.y + root.padFor(win.size) - 1

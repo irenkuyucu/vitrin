@@ -32,7 +32,7 @@ Item {
   // User settings, changed from the Dock Settings panel (right-click the divider) and
   // saved under "settings" in the config file. Ranges are enforced in applySettings().
   readonly property var settingDefaults: ({
-    iconSize: 48,          // pixels, 32-72
+    iconSize: 52,          // pixels, 32-72
     autoHide: true,        // hide off-screen until the pointer hits the bottom edge
     hideDelay: 500,        // ms after the pointer leaves before hiding, 0-2000
     animateLaunch: true,   // bounce icons while their app opens
@@ -50,10 +50,14 @@ Item {
   // Every icon is loaded once at the resolution the largest dock needs (2x for sharpness),
   // so changing the size only scales already-loaded images instead of reloading them.
   readonly property int iconSourceSize: 144
-  readonly property int itemPad: Math.round(iconSize / 8)
-  readonly property int dockPad: Math.round(iconSize / 8)
-  readonly property int edgeMargin: 6
+  // Height proportions match the macOS dock (measured from a MacBook Air: at 60 px icons
+  // the dock is 86 px tall, like macOS's 85 pt).
+  readonly property int itemPad: padFor(iconSize)      // above and below each icon
+  readonly property int dockPad: padFor(iconSize)      // inside the dock's edge
+  readonly property int edgeMargin: 4                  // between the dock and the screen edge
   readonly property int dockRadius: Math.round(iconSize / 3)
+  function padFor(size) { return Math.round(size * 0.1) }
+  function slotHeightFor(size) { return size + padFor(size) * 2 }
   readonly property int menuRadius: 12
   readonly property int rowRadius: 6
   readonly property int tipRadius: 6
@@ -291,6 +295,8 @@ Item {
     root.autoHide = bool("autoHide")
     root.animateLaunch = bool("animateLaunch")
     root.dividerResize = bool("dividerResize")
+    // Settings this version doesn't know (left from older versions) are dropped on save.
+    for (var key in s) if (root.settingDefaults[key] === undefined) ok = false
     return ok
   }
 
@@ -372,6 +378,97 @@ Item {
     if (!name) return fallback
     if (String(name).charAt(0) === "/") return Util.fileUrl(name)
     return Quickshell.iconPath(name, true) || fallback
+  }
+
+  // ------------------------------------------------------------ spacing
+  // Icon themes pad their artwork unevenly (a document icon is narrower than a folder, some
+  // fill the whole square), so equal slots leave uneven visible gaps. Instead, each icon's
+  // slot is as wide as its visible artwork plus one gap, with the artwork centered in it:
+  // every visible gap is the same, and slots still meet edge to edge (no dead click space).
+  // Each icon's visible extent is measured once from its pixels (see iconMeasurer below);
+  // until then it gets the classic equal slot.
+
+  // source url -> { l, r } (visible left/right edge as fractions of the icon's width),
+  // or false when it couldn't be measured.
+  property var iconExtents: ({})
+  property var measureQueue: []
+
+  // The gaps and end spaces are set for 52 px icons (the default size) and scale in
+  // proportion with the icon size, rounded to whole pixels (15 px at 52 -> 14 at 48, 21 at 72).
+  readonly property int spacingBaseSize: 52
+  readonly property int baseGap: 15        // between two icons' artwork
+  readonly property int baseEnds: 15       // from the dock's edge to the first/last artwork
+
+  function gapFor(size) { return Math.round(root.baseGap * size / root.spacingBaseSize) }
+  function endsFor(size) { return Math.round(root.baseEnds * size / root.spacingBaseSize) }
+
+  // Padding inside the dock's left and right edges (including its 1 px border). The end
+  // slots already bring half a gap of the end space.
+  function sidePadFor(size) {
+    return Math.max(1, endsFor(size) - Math.round(gapFor(size) / 2))
+  }
+  // Slot width for an icon that hasn't been measured yet (or can't be).
+  function classicSlotFor(size) { return size + Math.round(size / 8) * 2 }
+
+  // Slot width for an icon source at a given icon size. Used for both the real layout and
+  // the resize preview, so the two always agree.
+  function slotWidthFor(src, size) {
+    var e = root.iconExtents[src]
+    if (!e) return classicSlotFor(size)
+    return Math.round((e.r - e.l) * size) + gapFor(size)
+  }
+
+  // How far to move the artwork sideways so its visible middle sits mid-slot.
+  function artOffsetFor(src, size) {
+    var e = root.iconExtents[src]
+    return e ? Math.round((0.5 - (e.l + e.r) / 2) * size) : 0
+  }
+
+  // Space on each side of the divider line, as a multiple of the gap between two icons,
+  // rounded to whole pixels: 21 px beside 15 px gaps (macOS measures about 1.47).
+  readonly property real dividerGapRatio: 1.375
+
+  function dividerSideFor(size) { return Math.round(gapFor(size) * root.dividerGapRatio) }
+
+  function dividerWidthFor(size) {
+    // The icons beside the divider already bring half a gap each; the divider adds the rest
+    // plus its 1 px line.
+    return 2 * dividerSideFor(size) - gapFor(size) + 1
+  }
+
+  // The icon a slot is sized by. A folder shown as a stack is sized by a generic document
+  // icon (the shape most piles show) rather than by its current files, so its slot keeps
+  // one width as files come and go.
+  function slotSourceFor(item, isFolder) {
+    if (isFolder && root.displayAsFor(item) === "stack") return root.iconSource("text-x-generic")
+    return root.iconSource(item.icon)
+  }
+
+  // Every slot's sizing icon, apps then folders.
+  readonly property var dockSources: root.items.map(function(i) { return root.slotSourceFor(i, false) })
+    .concat(root.folders.map(function(f) { return root.slotSourceFor(f, true) }))
+  onDockSourcesChanged: queueMeasurements()
+
+  function queueMeasurements() {
+    var q = root.measureQueue.slice()
+    for (var i = 0; i < root.dockSources.length; i++) {
+      var s = root.dockSources[i]
+      if (s && root.iconExtents[s] === undefined && q.indexOf(s) === -1) q.push(s)
+    }
+    if (q.length !== root.measureQueue.length) root.measureQueue = q
+  }
+
+  // Measure an icon that isn't a slot of its own (file icons in a stack pile).
+  function requestMeasurement(src) {
+    if (!src || root.iconExtents[src] !== undefined || root.measureQueue.indexOf(src) !== -1) return
+    root.measureQueue = root.measureQueue.concat([src])
+  }
+
+  function finishMeasurement(src, extent) {
+    var m = Object.assign({}, root.iconExtents)
+    m[src] = extent
+    root.iconExtents = m
+    root.measureQueue = root.measureQueue.filter(function(s) { return s !== src })
   }
 
   function expandPath(path) {
@@ -957,7 +1054,10 @@ Item {
       property int dragTo: -1
       property real dragX: 0
       property string dragIcon: ""
-      readonly property int slotWidth: root.iconSize + root.itemPad * 2
+      property int dragWidth: 0               // slot width of the dragged icon
+      // Set for the moment a pulled-out icon is removed: everything is already where it
+      // belongs, so the slide-aside offsets are dropped without animating.
+      property bool snapShifts: false
       readonly property Item dragRow: row
 
       // Drag out to remove (pinned apps other than Files): pull the icon this far above
@@ -978,13 +1078,12 @@ Item {
 
       // The dock's exact width and height at a given icon size (same arithmetic as the real
       // layout), so the preview lands exactly where the real dock will be on release.
-      function slotFor(size) { return size + Math.round(size / 8) * 2 }
       function dockWidthFor(size) {
-        var slot = slotFor(size)
-        var divider = root.folders.length > 0 ? Math.round(slot / 3) : 0
-        return (root.items.length + root.folders.length) * slot + divider + (Math.round(size / 8) + 1) * 2
+        var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
+        for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
+        return width + root.sidePadFor(size) * 2
       }
-      function dockHeightFor(size) { return slotFor(size) + (Math.round(size / 8) + 1) * 2 }
+      function dockHeightFor(size) { return root.slotHeightFor(size) + (root.padFor(size) + 1) * 2 }
       readonly property real previewScaleX: resizePreview > 0 ? dockWidthFor(resizePreview) / dockWidthFor(root.iconSize) : 1
       readonly property real previewScaleY: resizePreview > 0 ? dockHeightFor(resizePreview) / dockHeightFor(root.iconSize) : 1
 
@@ -1134,6 +1233,7 @@ Item {
         var item = root.items[index]
         win.tipText = ""
         win.dragIcon = icon
+        win.dragWidth = root.slotWidthFor(root.iconSource(icon), root.iconSize)
         // Running apps (even pinned ones) only slide sideways; unpin those from their menu.
         win.dragRemovable = !!item && item.pinned && !root.isFixed(item.key) && item.windows.length === 0
         win.dragFrom = index
@@ -1146,16 +1246,32 @@ Item {
         win.dragSceneX = scene.x
         win.dragSceneY = scene.y
         win.dragX = point.x
-        var slot = Math.floor(point.x / win.slotWidth)
+        // Slots can differ in width, so try the dragged icon at each position among the
+        // others and pick the one whose middle is closest to the pointer.
+        var best = 0
+        var bestDistance = Infinity
+        var left = 0
+        var k = 0
+        for (var i = 0; i <= root.items.length; i++) {
+          if (i === win.dragFrom) continue
+          var distance = Math.abs(point.x - (left + win.dragWidth / 2))
+          if (distance < bestDistance) { bestDistance = distance; best = k }
+          if (i < root.items.length) left += root.slotWidthFor(root.iconSource(root.items[i].icon), root.iconSize)
+          k++
+        }
         // Slot 0 is Files' permanent spot; dragged apps can land anywhere after it.
-        win.dragTo = Math.max(1, Math.min(root.items.length - 1, slot))
+        win.dragTo = Math.max(1, Math.min(root.items.length - 1, best))
       }
 
       function endDrag() {
         var from = win.dragFrom
         var to = win.dragTo
         var removing = win.dragRemoving
-        if (removing) poof.play(dragGhost.x, dragGhost.y, dragGhost.source)
+        if (removing) {
+          poof.play(dragGhost.x, dragGhost.y, dragGhost.source)
+          win.snapShifts = true
+          Qt.callLater(function() { win.snapShifts = false })
+        }
         win.dragFrom = -1
         win.dragTo = -1
         if (from !== -1 && from < root.items.length) {
@@ -1272,7 +1388,10 @@ Item {
 
           anchors.horizontalCenter: parent.horizontalCenter
           y: win.revealed ? root.hoverSlack : zone.height + root.shadowPad
-          width: row.implicitWidth + (root.dockPad + 1) * 2
+          // Same arithmetic as the row's own layout (see dockWidthFor), so it updates in the
+          // same instant as the icons. While an icon is pulled out to remove, the dock
+          // already shrinks around the gap it leaves.
+          width: win.dockWidthFor(root.iconSize) - (win.dragRemoving ? win.dragWidth : 0)
           height: row.implicitHeight + (root.dockPad + 1) * 2
           color: "transparent"
           border.color: root.hairline
@@ -1287,14 +1406,17 @@ Item {
 
           Behavior on y { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           Behavior on width {
-            enabled: !win.applyingResize
-            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+            enabled: !win.applyingResize && !win.snapShifts
+            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
           }
 
 
           Row {
             id: row
-            anchors.centerIn: parent
+            // Pinned to the left padding rather than centered, so a dock that shrinks while
+            // an icon is pulled out closes in from both ends evenly.
+            x: root.sidePadFor(root.iconSize)
+            anchors.verticalCenter: parent.verticalCenter
             spacing: 0
 
             Repeater {
@@ -1315,20 +1437,25 @@ Item {
               id: divider
               visible: root.folders.length > 0
               // Wide enough that the gap on each side of the line matches the gap between two
-              // icons (a third of an icon slot: 20 px at the default 48 px icons), like macOS.
-              width: Math.round(win.slotWidth / 3)
+              // icons, like macOS (see dividerWidthFor).
+              width: root.dividerWidthFor(root.iconSize)
               // Slides left with the folders while an app is being pulled out to remove.
               transform: Translate {
-                x: win.dragRemoving ? -win.slotWidth : 0
-                Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                x: win.dragRemoving ? -win.dragWidth : 0
+                Behavior on x {
+                  enabled: !win.snapShifts
+                  NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                }
               }
-              height: win.slotWidth
+              height: root.slotHeightFor(root.iconSize)
               anchors.verticalCenter: parent.verticalCenter
 
               Rectangle {
-                anchors.centerIn: parent
+                // On a whole pixel (centering a 1 px line in an even width would blur it).
+                x: Math.floor((parent.width - 1) / 2)
+                anchors.verticalCenter: parent.verticalCenter
                 width: 1
-                height: Math.round(root.iconSize * 0.8)
+                height: Math.round(root.iconSize * 1.03)      // macOS: a bit taller than the icons
                 radius: 0.5
                 color: Util.alpha(root.foreground, dividerMouse.containsMouse ? 0.45 : 0.22)
               }
@@ -1434,9 +1561,11 @@ Item {
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
           readonly property real restingY: zone.y + dockBox.y + row.y + root.itemPad - 1
+          // Keeps the visible artwork (not the padded square) centered under the pointer.
+          readonly property real artOffset: root.artOffsetFor(root.iconSource(win.dragIcon), root.iconSize)
           x: win.dragRemoving
-            ? win.dragSceneX - width / 2
-            : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2))
+            ? win.dragSceneX - width / 2 + artOffset
+            : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset))
           y: dragLayer.offsetY + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
           opacity: win.dragRemoving ? 0.7 : 1
         }
@@ -1501,6 +1630,82 @@ Item {
         acceptedButtons: Qt.NoButton
         onEntered: win.reveal()
         onExited: hideTimer.restart()
+      }
+
+      // Measures icons' visible extents for even spacing (see "spacing" above): draws each
+      // icon off-screen and finds where its opaque pixels start and end. Only rows in the
+      // middle half of the artwork count, so a speech-bubble tail or a shadow along the
+      // bottom doesn't widen the slot. One measurer is enough, on the first screen.
+      Canvas {
+        id: iconMeasurer
+        visible: false
+        width: root.iconSourceSize
+        height: root.iconSourceSize
+        renderStrategy: Canvas.Immediate
+        readonly property bool active: win.screen === Quickshell.screens[0]
+        property string job: ""
+
+        function next() {
+          if (!active || job !== "" || root.measureQueue.length === 0) return
+          job = root.measureQueue[0]
+          measureTimeout.restart()
+          loadImage(job)
+          if (isImageLoaded(job)) requestPaint()
+          else if (isImageError(job)) done(false)
+        }
+
+        function done(extent) {
+          measureTimeout.stop()
+          var src = job
+          unloadImage(src)
+          job = ""
+          root.finishMeasurement(src, extent)
+          Qt.callLater(next)
+        }
+
+        onImageLoaded: if (job !== "") {
+          if (isImageLoaded(job)) requestPaint()
+          else if (isImageError(job)) done(false)
+        }
+
+        onPaint: {
+          if (job === "" || !isImageLoaded(job)) return
+          var ctx = getContext("2d")
+          ctx.clearRect(0, 0, width, height)
+          ctx.drawImage(job, 0, 0, width, height)
+          var px = ctx.getImageData(0, 0, width, height).data
+          var w = width
+          var h = height
+          function opaque(x, y) { return px[(y * w + x) * 4 + 3] > 64 }
+          // Vertical extent first, then the horizontal extent across its middle half.
+          var top = -1, bottom = -1
+          for (var y = 0; y < h && top === -1; y++)
+            for (var x = 0; x < w; x++) if (opaque(x, y)) { top = y; break }
+          for (y = h - 1; y >= 0 && bottom === -1; y--)
+            for (x = 0; x < w; x++) if (opaque(x, y)) { bottom = y; break }
+          if (top === -1) { done(false); return }
+          var y0 = top + Math.round((bottom - top) * 0.25)
+          var y1 = top + Math.round((bottom - top) * 0.75)
+          var left = w, right = -1
+          for (y = y0; y <= y1; y++) {
+            for (x = 0; x < left; x++) if (opaque(x, y)) { left = x; break }
+            for (x = w - 1; x > right; x--) if (opaque(x, y)) { right = x; break }
+          }
+          done(right < left ? false : { l: left / w, r: (right + 1) / w })
+        }
+
+        Connections {
+          target: root
+          function onMeasureQueueChanged() { iconMeasurer.next() }
+        }
+        Component.onCompleted: next()
+
+        // An image that never loads (missing file, broken theme) keeps the classic slot.
+        Timer {
+          id: measureTimeout
+          interval: 3000
+          onTriggered: if (iconMeasurer.job !== "") iconMeasurer.done(false)
+        }
       }
 
       // Dragging files to the bottom edge also brings the dock up.

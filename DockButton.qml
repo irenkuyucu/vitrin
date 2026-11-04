@@ -18,36 +18,37 @@ Item {
   readonly property bool acceptsFiles: dock.acceptsDrop(item, isFolder)
   readonly property bool beingDragged: !isFolder && window.dragFrom === slot
   readonly property string label: item.name || ""
+  readonly property string iconUrl: dock.iconSource(item.icon)
+  readonly property string slotUrl: dock.slotSourceFor(item, isFolder)
 
-  // While another icon is dragged, slide aside to open a gap where it would land.
-  // While it's being pulled out to remove, close up the gap it leaves instead.
+  // Each slot is as wide as the icon's visible artwork plus one gap (see "spacing" in
+  // Dock.qml), with the artwork nudged so its visible middle sits mid-slot.
+  readonly property int artOffset: dock.artOffsetFor(slotUrl, dock.iconSize)
+
+  // While another icon is dragged, slide aside (by the dragged icon's slot width) to open
+  // a gap where it would land. While it's being pulled out to remove, close up the gap it
+  // leaves instead.
   readonly property real dragShift: {
     if (window.dragFrom === -1 || beingDragged) return 0
     var from = window.dragFrom
-    if (window.dragRemoving) return (isFolder || slot > from) ? -window.slotWidth : 0
+    if (window.dragRemoving) return (isFolder || slot > from) ? -window.dragWidth : 0
     if (isFolder) return 0
     var to = window.dragTo
-    if (to > from && slot > from && slot <= to) return -window.slotWidth
-    if (to < from && slot >= to && slot < from) return window.slotWidth
+    if (to > from && slot > from && slot <= to) return -window.dragWidth
+    if (to < from && slot >= to && slot < from) return window.dragWidth
     return 0
   }
 
-  width: dock.iconSize + dock.itemPad * 2
+  width: dock.slotWidthFor(slotUrl, dock.iconSize)
   height: dock.iconSize + dock.itemPad * 2
   opacity: beingDragged ? 0 : 1
 
   transform: Translate {
     x: button.dragShift
-    Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-  }
-
-  // Highlight when files are dragged over an icon that can take them.
-  Rectangle {
-    anchors.fill: parent
-    anchors.margins: 1
-    visible: drop.containsDrag
-    color: Util.alpha(dock.foreground, 0.14)
-    radius: dock.rowRadius + 4
+    Behavior on x {
+      enabled: !button.window.snapShifts
+      NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+    }
   }
 
   // Folders set to "Display as: Stack" show their newest files piled up instead of the
@@ -56,19 +57,27 @@ Item {
     ? dock.filesFor(item).slice(0, 3) : []
   readonly property bool showStack: stackFiles.length > 0
 
+  // Like macOS, the pile is drawn to fit the slot rather than the slot growing to fit the
+  // pile: it never gets wider than the slot's artwork (a document icon's width), so the
+  // gaps stay even and nothing shifts when a wider file (a landscape photo) arrives.
+  readonly property real artWidth: dock.iconExtents[slotUrl]
+    ? width - dock.gapFor(dock.iconSize) : dock.iconSize
+
   // Like the macOS dock: no hover highlight (the name label shows instead),
   // and the icon dims briefly while pressed.
   Item {
     id: iconBox
     anchors.centerIn: parent
+    anchors.horizontalCenterOffset: button.artOffset
     anchors.verticalCenterOffset: -1
     width: dock.iconSize
     height: dock.iconSize
-    // No press dim for a click that only closes an open menu or stack.
-    opacity: mouse.pressed && !mouse.dragging && !mouse.suppressClick ? 0.6 : 1
-    scale: drop.containsDrag ? 1.1 : 1
+    // Dims while pressed (no press dim for a click that only closes an open menu or
+    // stack), and the same way while files are dragged over an icon that can take them,
+    // like the macOS dock. (No box around it: slots differ in width, so a box would be
+    // uneven or reach over the neighbours.)
+    opacity: (mouse.pressed && !mouse.dragging && !mouse.suppressClick) || drop.containsDrag ? 0.6 : 1
     Behavior on opacity { NumberAnimation { duration: 80 } }
-    Behavior on scale { NumberAnimation { duration: 120 } }
 
     transform: Translate { id: bounce; y: 0 }
 
@@ -77,7 +86,7 @@ Item {
       anchors.fill: parent
       sourceSize.width: dock.iconSourceSize
       sourceSize.height: dock.iconSourceSize
-      source: dock.iconSource(button.item.icon)
+      source: button.iconUrl
       fillMode: Image.PreserveAspectFit
       smooth: true
       asynchronous: true
@@ -93,6 +102,8 @@ Item {
         dock: button.dock
         file: modelData
         size: button.dock.iconSize
+        // Tilted files behind the top one need a little more room for the same width.
+        maxWidth: button.artWidth - (depth === 0 ? 0 : Math.round(button.dock.iconSize * 0.12))
         anchors.horizontalCenter: parent.horizontalCenter
         y: (parent.height - height) / 2 + 2 - depth * 3
         rotation: depth === 0 ? 0 : (depth === 1 ? -7 : 7)
@@ -111,12 +122,13 @@ Item {
     onRunningChanged: if (!running) bounce.y = 0
   }
 
-  // Running indicator: a small dot under every open app.
+  // Running indicator: a small dot under every open app, scaled with the icon size
+  // (4 px at 60 px icons, like macOS; never smaller than 3 px).
   Rectangle {
     visible: button.running
-    width: 4
-    height: 4
-    radius: 2
+    width: Math.max(3, Math.round(dock.iconSize / 15))
+    height: width
+    radius: width / 2
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
     anchors.bottomMargin: 0

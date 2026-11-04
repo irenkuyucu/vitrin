@@ -9,6 +9,7 @@ Item {
   required property var dock
   property var file: null
   property int size: 48
+  property real maxWidth: size     // the widest the visible picture may be (see DockButton)
 
   readonly property bool thumbnail: !!file && file.image
 
@@ -30,7 +31,7 @@ Item {
     id: thumb
     visible: fileIcon.thumbnail
     anchors.centerIn: parent
-    width: fileIcon.size - 6
+    width: Math.min(fileIcon.size - 6, fileIcon.maxWidth - 4)   // 4: the white frame
     height: fileIcon.size - 6
     fillMode: Image.PreserveAspectFit
     source: fileIcon.thumbnail ? Util.fileUrl(fileIcon.file.path) : ""
@@ -41,9 +42,15 @@ Item {
   }
 
   Image {
+    id: typeIcon
     visible: !fileIcon.thumbnail || thumb.status === Image.Error
     anchors.fill: parent
     source: fileIcon.file ? fileIcon.dock.iconSource(fileIcon.file.icon) : ""
+    // File-type icons wider than maxWidth (once measured) are scaled down to fit.
+    readonly property var extent: fileIcon.dock.iconExtents[String(source)]
+    scale: extent ? Math.min(1, fileIcon.maxWidth / ((extent.r - extent.l) * fileIcon.size)) : 1
+    onSourceChanged: fileIcon.dock.requestMeasurement(String(source))
+    Component.onCompleted: fileIcon.dock.requestMeasurement(String(source))
     sourceSize.width: fileIcon.dock.iconSourceSize
     sourceSize.height: fileIcon.dock.iconSourceSize
     fillMode: Image.PreserveAspectFit

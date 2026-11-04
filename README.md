@@ -26,6 +26,8 @@ shell, so it adds no extra background process.
 - **Launch feedback**: an icon bounces while its app starts.
 - **Web apps and terminals**: Omarchy web apps (WhatsApp, YouTube, ...) and terminal windows
   get their proper icons and are grouped correctly, whichever terminal you use.
+- **Even spacing**: icon themes pad their artwork unevenly, so Vitrin measures each icon
+  and spaces them by what you actually see: every gap between icons looks the same.
 - **Resize from the divider**: drag the divider up or down to resize the dock, as on macOS
   (can be turned off in the settings).
 - **Settings**: right-click the divider for Turn Hiding On/Off and a settings dialog (size,
@@ -59,7 +61,7 @@ changes when the file is saved.
 ```jsonc
 {
   "settings": {
-    "iconSize": 48,         // 32-72
+    "iconSize": 52,         // 32-72
     "autoHide": true,
     "hideDelay": 500,       // milliseconds, 0-2000
     "animateLaunch": true,

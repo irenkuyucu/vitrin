@@ -2376,9 +2376,65 @@ Item {
               NumberAnimation { target: menuColumn; property: "opacity"; from: 0.2; to: 1; duration: 160; easing.type: Easing.OutCubic }
             }
 
+            // Many windows: the window rows scroll (wheel or touchpad) in a list capped at
+            // maxWindowRows rows (or half the screen), with faded edges where more are hidden;
+            // the actions below always stay in view.
+            readonly property var windowRows: win.menuList.filter(function(r) { return r.kind === "window" })
+            readonly property var otherRows: win.menuList.filter(function(r) { return r.kind !== "window" })
+            readonly property int maxWindowRows: 10
+
+            Flickable {
+              id: windowList
+              visible: menuColumn.windowRows.length > 0
+              width: parent.width
+              implicitWidth: windowColumn.implicitWidth
+              height: Math.min(windowColumn.implicitHeight,
+                               Math.min(menuColumn.maxWindowRows * 32, win.screen ? win.screen.height / 2 : 400))
+              contentHeight: windowColumn.implicitHeight
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              readonly property bool scrolls: contentHeight > height + 0.5
+
+              Column {
+                id: windowColumn
+                width: windowList.width
+                Repeater {
+                  model: menuColumn.windowRows
+                  delegate: menuRowComponent
+                }
+              }
+
+              // Fades over the list's top and bottom where more windows are hidden.
+              Rectangle {
+                parent: windowList
+                visible: windowList.scrolls && !windowList.atYBeginning
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                height: 20
+                gradient: Gradient {
+                  GradientStop { position: 0; color: root.surface }
+                  GradientStop { position: 1; color: Qt.rgba(root.surface.r, root.surface.g, root.surface.b, 0) }
+                }
+              }
+              Rectangle {
+                parent: windowList
+                visible: windowList.scrolls && !windowList.atYEnd
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: 20
+                gradient: Gradient {
+                  GradientStop { position: 0; color: Qt.rgba(root.surface.r, root.surface.g, root.surface.b, 0) }
+                  GradientStop { position: 1; color: root.surface }
+                }
+              }
+            }
+
             Repeater {
-              model: win.menuList
-              delegate: Item {
+              model: menuColumn.otherRows
+              delegate: menuRowComponent
+            }
+
+            Component {
+              id: menuRowComponent
+              Item {
                 id: menuRow
                 required property var modelData
                 readonly property bool isSeparator: modelData.kind === "separator"
@@ -2458,6 +2514,7 @@ Item {
 
                 MouseArea {
                   id: rowMouse
+                  onWheel: function(w) { w.accepted = false }   // scrolling is for the window list
                   enabled: menuRow.interactive
                   anchors.fill: parent
                   hoverEnabled: true

@@ -9,7 +9,8 @@ import qs.Commons as Commons
 // icon (up to dock.stackMax of them). The grid shows at most 3 rows (fewer on short
 // screens) and scrolls for the rest, creating tiles (and loading thumbnails) only for
 // the ones in view. Click a file to open it; right-click for Open / Show in Files.
-// Clicking anywhere outside closes it, like the dock's menus.
+// Clicking anywhere outside closes it, like the dock's menus. Files can be dragged out of
+// it to other apps (a browser upload, Files, a chat), which closes it once dropped.
 PopupWindow {
   id: stack
 
@@ -224,6 +225,25 @@ PopupWindow {
             width: stack.tileWidth
             height: stack.tileHeight
 
+            // Dragging the file out, shown as its icon. Offered as copy or move: the app it's
+            // dropped on decides. Files moves it (same drive), apps like a browser or a chat
+            // copy it. (Modifier keys can't change that here: the dock never has keyboard
+            // focus, so it can't see them, and the target only does if it was focused.)
+            Drag.dragType: Drag.Automatic
+            Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+            Drag.proposedAction: Qt.CopyAction
+            Drag.mimeData: ({ "text/uri-list": Util.fileUrl(tile.modelData.path) + "\r\n" })
+            Drag.hotSpot.x: stack.iconSize / 2
+            Drag.hotSpot.y: stack.iconSize / 2
+            Drag.active: tileMouse.drag.active
+            Drag.onDragStarted: stack.window.stackDragging = true
+            Drag.onDragFinished: function(dropAction) {
+              stack.window.stackDragging = false
+              stack.window.closeStack()
+              stack.dock.refreshFolders()   // a moved file is gone from the folder
+            }
+            Item { id: dragHandle }         // what the press-and-drag moves (nothing visible)
+
             Rectangle {
               anchors.fill: parent
               anchors.margins: 2
@@ -264,10 +284,20 @@ PopupWindow {
               hoverEnabled: true
               onWheel: function(w) { w.accepted = false }   // scrolling is for the grid
               acceptedButtons: Qt.LeftButton | Qt.RightButton
+              // Left-dragging a file drags it out of the stack (not while its menu is open).
+              drag.target: stack.tileMenuFile === null ? dragHandle : null
+              drag.threshold: 8
+              preventStealing: true   // a drag is the file's, not the grid scrolling
+              onPressed: function(m) {
+                dismissing = stack.tileMenuFile !== null
+                // The drag image: a snapshot of the icon, ready before the drag starts.
+                if (m.button === Qt.LeftButton && !dismissing)
+                  tileIcon.grabToImage(function(result) { tile.Drag.imageSource = result.url },
+                                       Qt.size(stack.iconSize, stack.iconSize))
+              }
               // While a file's menu is open, a click anywhere only closes that menu
               // (like the dock's own menus), so it can't open the file underneath.
               property bool dismissing: false
-              onPressed: dismissing = stack.tileMenuFile !== null
               onClicked: function(m) {
                 if (dismissing) {
                   stack.tileMenuFile = null

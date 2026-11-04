@@ -1722,6 +1722,7 @@ Item {
 
       // ---------------------------------------------------------- folder stack
       property bool stackOpen: false
+      property bool stackDragging: false      // a file is being dragged out of the stack
       property Item stackTarget: null
       property var stackFolder: null
 
@@ -2677,8 +2678,9 @@ Item {
 
       // Any click outside the stack closes it (declared here, like the menu's: a grab
       // declared inside the popup itself never activated).
+      // (Not while a file is dragged out of it: the stack must stay until the drop.)
       HyprlandFocusGrab {
-        active: win.stackOpen
+        active: win.stackOpen && !win.stackDragging
         windows: [stackPopup]
         onCleared: win.closeStack(true)
       }

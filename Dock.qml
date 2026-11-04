@@ -186,6 +186,20 @@ Item {
   // typo isn't overwritten) until the file is fixed, after a backup copy is made.
   property bool configBroken: false
 
+  // A file caught mid-save (many tools empty it, then write it, sometimes more than once)
+  // looks broken for a moment. So an unreadable read only starts (or restarts) a short
+  // wait; the file counts as broken only if it's still unreadable once it has been quiet
+  // for the whole wait.
+  property bool configFinalCheck: false
+  Timer {
+    id: configRetryTimer
+    interval: 500
+    onTriggered: {
+      root.configFinalCheck = true
+      configFile.reload()
+    }
+  }
+
   // Assigns only when the value actually changed, so saving (which reloads the file)
   // doesn't make the dock rebuild or recheck folders for nothing.
   function assignIfChanged(name, value) {
@@ -198,6 +212,11 @@ Item {
       cfg = JSON.parse(raw)
       if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) throw new Error("not a JSON object")
     } catch (e) {
+      if (!root.configFinalCheck && !root.configBroken) {
+        configRetryTimer.restart()
+        return
+      }
+      root.configFinalCheck = false
       if (!root.configBroken) {
         root.configBroken = true
         Quickshell.execDetached(["cp", "-f", "--", root.configPath, root.configPath + ".broken"])
@@ -207,6 +226,8 @@ Item {
       }
       return
     }
+    configRetryTimer.stop()
+    root.configFinalCheck = false
     root.configBroken = false
     var needsSave = false
 

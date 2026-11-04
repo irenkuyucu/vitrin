@@ -65,7 +65,6 @@ Item {
     fillMode: Image.PreserveAspectFit
     source: fileIcon.thumbSource
     autoTransform: true          // photos' rotation tags (portrait phone photos stay upright)
-    cache: false                 // a remade preview has the same path as the old one
     sourceSize.width: fileIcon.dock.iconSourceSize
     sourceSize.height: fileIcon.dock.iconSourceSize
     asynchronous: true

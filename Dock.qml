@@ -402,26 +402,87 @@ Item {
   function gapFor(size) { return Math.round(root.baseGap * size / root.spacingBaseSize) }
   function endsFor(size) { return Math.round(root.baseEnds * size / root.spacingBaseSize) }
 
-  // Padding inside the dock's left and right edges (including its 1 px border). The end
-  // slots already bring half a gap of the end space.
-  function sidePadFor(size) {
-    return Math.max(1, endsFor(size) - Math.round(gapFor(size) / 2))
-  }
+  // Every icon's artwork starts this far into its slot, and the rest of the gap follows it,
+  // so each gap is the same whole number of pixels even when it's odd (7 + 8 = 15).
+  function gapLeftFor(size) { return Math.floor(gapFor(size) / 2) }
+  function gapRightFor(size) { return gapFor(size) - gapLeftFor(size) }
+
+  // Padding inside the dock's left and right edges (including its 1 px border); the end
+  // slots bring the rest of the end space.
+  function leftPadFor(size) { return Math.max(1, endsFor(size) - gapLeftFor(size)) }
+  function rightPadFor(size) { return Math.max(1, endsFor(size) - gapRightFor(size)) }
   // Slot width for an icon that hasn't been measured yet (or can't be).
   function classicSlotFor(size) { return size + Math.round(size / 8) * 2 }
 
-  // Slot width for an icon source at a given icon size. Used for both the real layout and
-  // the resize preview, so the two always agree.
+  // ------------------------------------------------------------ size normalization
+  // Icon themes also draw their artwork at different sizes within the square (a document
+  // is narrow, some icons fill the whole square), so each icon is scaled to look about as
+  // big as the others. The rule is Android Launcher3's: equal outline area (holes filled
+  // in), with a slightly larger target for round shapes, which look smaller than squares
+  // of the same area. Squares end up about 81% of the square wide, like Apple's icon grid.
+  readonly property real squareArea: 375 / 576
+  readonly property real circleArea: 380 / 576
+  readonly property real maxGrowth: 1.12   // sparse outline icons would otherwise overshoot
+
+  function normScaleFor(src) {
+    var e = root.iconExtents[src]
+    if (!e || !e.hull) return 1
+    var w = e.R - e.L, h = e.b - e.t
+    // How square the outline is: 1 for a square, pi/4 for a circle.
+    var squareness = e.hull / (w * h)
+    var round = Math.PI / 4
+    var target = squareness < round ? root.circleArea
+      : root.squareArea + (root.circleArea - root.squareArea) * (1 - squareness) / (1 - round)
+    return Math.min(Math.sqrt(target / e.hull), root.maxGrowth, 1 / Math.max(w, h))
+  }
+
+  // The size an icon is drawn at: its normalized scale applied to the icon size, rounded
+  // to whole pixels. Icons are drawn at this exact size on whole-pixel positions (rather
+  // than scaled by a fraction), which keeps them sharp; everything below works from it.
+  // Of the ideal size and one pixel either way, the one that puts the artwork's left and
+  // right edges closest to whole pixels, so they come out crisp and gaps measure exact.
+  function drawSizeFor(src, size) {
+    var ideal = size * normScaleFor(src)
+    var e = root.iconExtents[src]
+    if (!e) return Math.round(ideal)
+    var best = Math.round(ideal), bestScore = Infinity
+    for (var d = Math.round(ideal) - 1; d <= Math.round(ideal) + 1; d++) {
+      var score = Math.abs(e.l * d - Math.round(e.l * d)) + Math.abs(e.r * d - Math.round(e.r * d))
+        + Math.abs(d - ideal) * 0.01   // tie-break: nearest to the ideal size
+      if (score < bestScore) { bestScore = score; best = d }
+    }
+    return best
+  }
+
+  // Where the artwork's visible left edge falls in the drawn icon, and how wide it is,
+  // in whole pixels.
+  function artLeftFor(src, size) {
+    var e = root.iconExtents[src]
+    return e ? Math.round(e.l * drawSizeFor(src, size)) : 0
+  }
+  function artWidthFor(src, size) {
+    var e = root.iconExtents[src]
+    var d = drawSizeFor(src, size)
+    return e ? Math.round(e.r * d) - Math.round(e.l * d) : d
+  }
+
+  // Slot width for an icon source at a given icon size: its drawn visible width plus one
+  // gap. Used for both the real layout and the resize preview, so the two always agree.
   function slotWidthFor(src, size) {
     var e = root.iconExtents[src]
     if (!e) return classicSlotFor(size)
-    return Math.round((e.r - e.l) * size) + gapFor(size)
+    return artWidthFor(src, size) + gapFor(size)
   }
 
-  // How far to move the artwork sideways so its visible middle sits mid-slot.
+  // How far to move the drawn icon so its visible middle sits mid-slot, sideways and
+  // up/down (whole pixels).
   function artOffsetFor(src, size) {
     var e = root.iconExtents[src]
-    return e ? Math.round((0.5 - (e.l + e.r) / 2) * size) : 0
+    return e ? Math.round((0.5 - (e.l + e.r) / 2) * drawSizeFor(src, size)) : 0
+  }
+  function artOffsetYFor(src, size) {
+    var e = root.iconExtents[src]
+    return e && e.hull ? Math.round((0.5 - (e.t + e.b) / 2) * drawSizeFor(src, size)) : 0
   }
 
   // Space on each side of the divider line, as a multiple of the gap between two icons,
@@ -1081,7 +1142,7 @@ Item {
       function dockWidthFor(size) {
         var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
         for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
-        return width + root.sidePadFor(size) * 2
+        return width + root.leftPadFor(size) + root.rightPadFor(size)
       }
       function dockHeightFor(size) { return root.slotHeightFor(size) + (root.padFor(size) + 1) * 2 }
       readonly property real previewScaleX: resizePreview > 0 ? dockWidthFor(resizePreview) / dockWidthFor(root.iconSize) : 1
@@ -1268,7 +1329,7 @@ Item {
         var to = win.dragTo
         var removing = win.dragRemoving
         if (removing) {
-          poof.play(dragGhost.x, dragGhost.y, dragGhost.source)
+          poof.play(dragGhost.x, dragGhost.y, dragGhost.source, dragGhost.width)
           win.snapShifts = true
           Qt.callLater(function() { win.snapShifts = false })
         }
@@ -1415,7 +1476,7 @@ Item {
             id: row
             // Pinned to the left padding rather than centered, so a dock that shrinks while
             // an icon is pulled out closes in from both ends evenly.
-            x: root.sidePadFor(root.iconSize)
+            x: root.leftPadFor(root.iconSize)
             anchors.verticalCenter: parent.verticalCenter
             spacing: 0
 
@@ -1451,8 +1512,9 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
 
               Rectangle {
-                // On a whole pixel (centering a 1 px line in an even width would blur it).
-                x: Math.floor((parent.width - 1) / 2)
+                // The icon before it brings gapRight, the one after it gapLeft; the line
+                // sits so both sides come out the same.
+                x: root.dividerSideFor(root.iconSize) - root.gapRightFor(root.iconSize)
                 anchors.verticalCenter: parent.verticalCenter
                 width: 1
                 height: Math.round(root.iconSize * 1.03)      // macOS: a bit taller than the icons
@@ -1553,20 +1615,24 @@ Item {
         Image {
           id: dragGhost
           visible: win.dragFrom !== -1
-          width: root.iconSize
-          height: root.iconSize
+          // Drawn at the same normalized size as in the dock.
+          width: root.drawSizeFor(root.iconSource(win.dragIcon), root.iconSize)
+          height: width
           sourceSize.width: root.iconSourceSize
           sourceSize.height: root.iconSourceSize
           source: root.iconSource(win.dragIcon)
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
           readonly property real restingY: zone.y + dockBox.y + row.y + root.itemPad - 1
-          // Keeps the visible artwork (not the padded square) centered under the pointer.
+            + Math.round((root.iconSize - height) / 2)
+          // The visible artwork (not the padded square) stays centered under the pointer.
           readonly property real artOffset: root.artOffsetFor(root.iconSource(win.dragIcon), root.iconSize)
+          readonly property real artOffsetY: root.artOffsetYFor(root.iconSource(win.dragIcon), root.iconSize)
           x: win.dragRemoving
             ? win.dragSceneX - width / 2 + artOffset
             : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset))
-          y: dragLayer.offsetY + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
+          y: dragLayer.offsetY + artOffsetY
+             + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
           opacity: win.dragRemoving ? 0.7 : 1
         }
 
@@ -1601,8 +1667,10 @@ Item {
           sourceSize.height: root.iconSourceSize
           smooth: true
 
-          function play(px, py, src) {
+          function play(px, py, src, size) {
             poof.source = src
+            poof.width = size
+            poof.height = size
             poof.x = px
             poof.y = py
             poof.scale = 1
@@ -1691,7 +1759,23 @@ Item {
             for (x = 0; x < left; x++) if (opaque(x, y)) { left = x; break }
             for (x = w - 1; x > right; x--) if (opaque(x, y)) { right = x; break }
           }
-          done(right < left ? false : { l: left / w, r: (right + 1) / w })
+          if (right < left) { done(false); return }
+          // The whole outline, for size normalization: its full width and the area it
+          // covers with holes filled in (each row counted from its first to its last
+          // opaque pixel).
+          var fullLeft = w, fullRight = -1, hull = 0
+          for (y = top; y <= bottom; y++) {
+            var rowLeft = -1, rowRight = -1
+            for (x = 0; x < w; x++) if (opaque(x, y)) { rowLeft = x; break }
+            if (rowLeft === -1) continue
+            for (x = w - 1; x >= rowLeft; x--) if (opaque(x, y)) { rowRight = x; break }
+            hull += rowRight - rowLeft + 1
+            fullLeft = Math.min(fullLeft, rowLeft)
+            fullRight = Math.max(fullRight, rowRight)
+          }
+          done({ l: left / w, r: (right + 1) / w,
+                 L: fullLeft / w, R: (fullRight + 1) / w, t: top / h, b: (bottom + 1) / h,
+                 hull: hull / (w * h) })
         }
 
         Connections {

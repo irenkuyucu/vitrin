@@ -21,9 +21,11 @@ Item {
   readonly property string iconUrl: dock.iconSource(item.icon)
   readonly property string slotUrl: dock.slotSourceFor(item, isFolder)
 
-  // Each slot is as wide as the icon's visible artwork plus one gap (see "spacing" in
-  // Dock.qml), with the artwork nudged so its visible middle sits mid-slot.
-  readonly property int artOffset: dock.artOffsetFor(slotUrl, dock.iconSize)
+  // The artwork is scaled to look as big as the others ("size normalization" in Dock.qml)
+  // and each slot is as wide as the scaled artwork plus one gap ("spacing"), with the
+  // artwork nudged so its visible middle sits mid-slot.
+  readonly property int drawSize: dock.drawSizeFor(slotUrl, dock.iconSize)
+  readonly property int artOffsetY: dock.artOffsetYFor(slotUrl, dock.iconSize)
 
   // While another icon is dragged, slide aside (by the dragged icon's slot width) to open
   // a gap where it would land. While it's being pulled out to remove, close up the gap it
@@ -60,18 +62,20 @@ Item {
   // Like macOS, the pile is drawn to fit the slot rather than the slot growing to fit the
   // pile: it never gets wider than the slot's artwork (a document icon's width), so the
   // gaps stay even and nothing shifts when a wider file (a landscape photo) arrives.
-  readonly property real artWidth: dock.iconExtents[slotUrl]
-    ? width - dock.gapFor(dock.iconSize) : dock.iconSize
+  readonly property real artWidth: dock.artWidthFor(slotUrl, dock.iconSize)
 
   // Like the macOS dock: no hover highlight (the name label shows instead),
   // and the icon dims briefly while pressed.
   Item {
     id: iconBox
-    anchors.centerIn: parent
-    anchors.horizontalCenterOffset: button.artOffset
-    anchors.verticalCenterOffset: -1
-    width: dock.iconSize
-    height: dock.iconSize
+    // The artwork's visible left edge sits exactly gapLeft into the slot (see "spacing").
+    x: dock.iconExtents[button.slotUrl]
+      ? dock.gapLeftFor(dock.iconSize) - dock.artLeftFor(button.slotUrl, dock.iconSize)
+      : Math.round((button.width - width) / 2)
+    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenterOffset: -1 + button.artOffsetY
+    width: button.drawSize
+    height: button.drawSize
     // Dims while pressed (no press dim for a click that only closes an open menu or
     // stack), and the same way while files are dragged over an icon that can take them,
     // like the macOS dock. (No box around it: slots differ in width, so a box would be
@@ -101,9 +105,9 @@ Item {
         readonly property int depth: button.stackFiles.length - 1 - index   // 0 = newest
         dock: button.dock
         file: modelData
-        size: button.dock.iconSize
+        size: button.drawSize
         // Tilted files behind the top one need a little more room for the same width.
-        maxWidth: button.artWidth - (depth === 0 ? 0 : Math.round(button.dock.iconSize * 0.12))
+        maxWidth: button.artWidth - (depth === 0 ? 0 : Math.round(button.drawSize * 0.12))
         anchors.horizontalCenter: parent.horizontalCenter
         y: (parent.height - height) / 2 + 2 - depth * 3
         rotation: depth === 0 ? 0 : (depth === 1 ? -7 : 7)

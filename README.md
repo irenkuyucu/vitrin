@@ -26,8 +26,10 @@ shell, so it adds no extra background process.
 - **Launch feedback**: an icon bounces while its app starts.
 - **Web apps and terminals**: Omarchy web apps (WhatsApp, YouTube, ...) and terminal windows
   get their proper icons and are grouped correctly, whichever terminal you use.
+- **Resize from the divider**: drag the divider up or down to resize the dock, as on macOS
+  (can be turned off in the settings).
 - **Settings**: right-click the divider for Turn Hiding On/Off and a settings dialog (size,
-  auto-hide, hide delay, launch animation).
+  divider resizing, auto-hide, hide delay, launch animation).
 
 ## Requirements
 
@@ -60,7 +62,8 @@ changes when the file is saved.
     "iconSize": 48,         // 32-72
     "autoHide": true,
     "hideDelay": 500,       // milliseconds, 0-2000
-    "animateLaunch": true
+    "animateLaunch": true,
+    "dividerResize": true   // drag the divider to resize
   },
   // Desktop entry IDs, in dock order (Files always comes first).
   "pins": ["org.gnome.Nautilus", "WhatsApp", "libreoffice-writer"],

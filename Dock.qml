@@ -35,12 +35,14 @@ Item {
     iconSize: 48,          // pixels, 32-72
     autoHide: true,        // hide off-screen until the pointer hits the bottom edge
     hideDelay: 500,        // ms after the pointer leaves before hiding, 0-2000
-    animateLaunch: true    // bounce icons while their app opens
+    animateLaunch: true,   // bounce icons while their app opens
+    dividerResize: true    // drag the divider up/down to resize the dock (like macOS)
   })
   property int iconSize: settingDefaults.iconSize
   property bool autoHide: settingDefaults.autoHide
   property int hideDelay: settingDefaults.hideDelay
   property bool animateLaunch: settingDefaults.animateLaunch
+  property bool dividerResize: settingDefaults.dividerResize
 
   // Look and feel. Shapes follow the GNOME/Adwaita conventions the Files app uses
   // (rounded surfaces, hairline borders, soft shadows); colors follow the Omarchy theme.
@@ -285,6 +287,7 @@ Item {
     root.hideDelay = num("hideDelay", 0, 2000, 100)
     root.autoHide = bool("autoHide")
     root.animateLaunch = bool("animateLaunch")
+    root.dividerResize = bool("dividerResize")
     return ok
   }
 
@@ -293,7 +296,8 @@ Item {
       iconSize: root.iconSize,
       autoHide: root.autoHide,
       hideDelay: root.hideDelay,
-      animateLaunch: root.animateLaunch
+      animateLaunch: root.animateLaunch,
+      dividerResize: root.dividerResize
     }
   }
 
@@ -1181,7 +1185,7 @@ Item {
         onTriggered: {
           if (!win.hidingNow || win.settingsOpen) return
           if (zoneHover.hovered || hotspot.containsMouse || win.menuOpen || win.stackOpen) return
-          if (win.dragFrom !== -1 || win.dropDepth > 0) return
+          if (win.dragFrom !== -1 || win.dropDepth > 0 || dividerMouse.resizing) return
           win.revealed = false
           win.tipText = ""
         }
@@ -1286,14 +1290,56 @@ Item {
                 color: Util.alpha(root.foreground, dividerMouse.containsMouse ? 0.45 : 0.22)
               }
 
+              // Right-click: the dock menu. Left-drag up/down (when "dividerResize" is on):
+              // resize the dock live, in the Size slider's steps; saved on release.
               MouseArea {
                 id: dividerMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                acceptedButtons: Qt.RightButton
+                preventStealing: true
+                acceptedButtons: root.dividerResize ? (Qt.LeftButton | Qt.RightButton) : Qt.RightButton
+                cursorShape: root.dividerResize ? Qt.SizeVerCursor : Qt.ArrowCursor
                 property bool suppressClick: false
-                onPressed: suppressClick = win.justClosedPopup()
-                onClicked: if (!suppressClick) win.openDockMenu(divider)
+                property bool resizing: false
+                property real startScreenY: 0
+                property int startSize: 0
+
+                // Pointer height on screen. The dock window grows and shrinks while resizing,
+                // so the pointer's position inside it isn't stable; on screen it is.
+                function screenY(m) {
+                  return mapToItem(null, m.x, m.y).y + (win.screen.height - win.height)
+                }
+
+                onPressed: function(m) {
+                  suppressClick = win.justClosedPopup()
+                  if (m.button === Qt.LeftButton && !suppressClick) {
+                    resizing = true
+                    startScreenY = screenY(m)
+                    startSize = root.iconSize
+                  }
+                }
+                onPositionChanged: function(m) {
+                  if (!resizing) return
+                  // Up = bigger. One 4 px size step per 4 px dragged.
+                  var size = startSize + Math.round((startScreenY - screenY(m)) / 4) * 4
+                  size = Math.max(32, Math.min(72, size))
+                  if (size !== root.iconSize) root.setSetting("iconSize", size, false)
+                }
+                onReleased: function(m) {
+                  if (!resizing) return
+                  resizing = false
+                  if (root.iconSize !== startSize) root.saveConfig()
+                  hideTimer.restart()
+                }
+                onCanceled: {
+                  if (resizing) {
+                    resizing = false
+                    if (root.iconSize !== startSize) root.saveConfig()
+                  }
+                }
+                onClicked: function(m) {
+                  if (m.button === Qt.RightButton && !suppressClick) win.openDockMenu(divider)
+                }
               }
             }
 
@@ -1673,6 +1719,30 @@ Item {
                 value: root.iconSize
                 onMoved: function(v) { root.setSetting("iconSize", v, false) }
                 onReleased: function(v) { root.setSetting("iconSize", v, true) }
+              }
+            }
+
+            // Resize by dragging the divider
+            Item {
+              width: parent.width
+              height: Math.max(dividerLabel.implicitHeight, dividerSwitch.implicitHeight)
+              Text {
+                id: dividerLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - dividerSwitch.width - 12
+                wrapMode: Text.WordWrap
+                text: "Drag the divider to resize"
+                color: Commons.Color.popups.text
+                font.family: root.uiFont
+                font.pixelSize: root.uiFontSize
+              }
+              DockSwitch {
+                id: dividerSwitch
+                dock: root
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.dividerResize
+                onToggled: function(on) { root.setSetting("dividerResize", on, true) }
               }
             }
 

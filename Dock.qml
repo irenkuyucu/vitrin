@@ -1239,7 +1239,7 @@ Item {
 
   onFoldersChanged: folderRefreshSoon.restart()
 
-  // Records are NUL-terminated "<folder index>\t<mime type>\t<path>" (so any file name,
+  // Records are NUL-terminated "<folder index>\t<mime type>\t<icon names>\t<path>" (so any file name,
   // even one with a tab or line break in it, comes through intact).
   function applyFolderListing(dirs, text) {
     assignIfChanged("folderFiles", parseFolderListing(dirs, text).files)
@@ -1257,7 +1257,8 @@ Item {
       var dir = dirs[parseInt(parts[0])]
       if (!map[dir]) continue
       if (parts[1] === "#total") { totals[dir] = parseInt(parts[2]) || 0; continue }
-      var path = parts.slice(2).join("\t")
+      if (parts.length < 4) continue
+      var path = parts.slice(3).join("\t")
       var mime = parts[1] || "application/octet-stream"
       var isDir = mime === "inode/directory"
       map[dir].push({
@@ -1265,7 +1266,7 @@ Item {
         name: path.slice(path.lastIndexOf("/") + 1),
         isDir: isDir,
         mime: mime,
-        icon: mimeIcon(mime, isDir),
+        icon: mimeIcon(mime, isDir, parts[2]),
         image: /^image\/(png|jpeg|gif|webp|bmp|svg\+xml)$/.test(mime)
       })
     }
@@ -1275,11 +1276,19 @@ Item {
   // File-type icon from the current icon theme, with generic fallbacks. Remembered per
   // type, since a big folder repeats the same few types many times.
   property var mimeIconCache: ({})
-  function mimeIcon(mime, isDir) {
+  // `icons` is the comma-separated list GIO gives (the icons Files would use, best first):
+  // the first one the theme has wins; the guesses in findMimeIcon are the fallback.
+  function mimeIcon(mime, isDir, icons) {
     if (isDir) return "folder"
-    if (root.mimeIconCache[mime]) return root.mimeIconCache[mime]
-    var found = findMimeIcon(mime)
-    root.mimeIconCache[mime] = found
+    var cacheKey = mime + "|" + (icons || "")
+    if (root.mimeIconCache[cacheKey]) return root.mimeIconCache[cacheKey]
+    var found = ""
+    var names = String(icons || "").split(",")
+    for (var i = 0; i < names.length && !found; i++) {
+      if (names[i] && names[i].indexOf("-symbolic") === -1 && Quickshell.iconPath(names[i], true)) found = names[i]
+    }
+    if (!found) found = findMimeIcon(mime)
+    root.mimeIconCache[cacheKey] = found
     return found
   }
   function findMimeIcon(mime) {

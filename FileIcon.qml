@@ -2,8 +2,8 @@ import QtQuick
 import Quickshell
 import qs.Commons
 
-// One file as an icon: images show a small thumbnail in a thin white frame (like macOS);
-// everything else shows its file-type icon. `file` comes from Dock.filesFor().
+// One file as an icon: a preview in a thin white frame (like macOS) when there is one,
+// else its file-type icon. `file` comes from Dock.filesFor().
 Item {
   id: fileIcon
 
@@ -12,15 +12,15 @@ Item {
   property int size: 48
   property real maxWidth: size     // the widest the visible picture may be (see DockButton)
 
-  readonly property bool thumbnail: !!file && file.image
-
-  // Thumbnails come from the shared thumbnail cache (~/.cache/thumbnails, filled by Files
-  // and other apps) when it has one: small and quick to load. Otherwise the image itself
-  // is decoded, which for a big photo is slow. Whether the cache has one is checked by the
-  // dock's silent icon measurer (as for icon files, see Dock.qml's displayableIcon), so a
-  // missing cache file never makes an Image print "Cannot open" to the shell log.
+  // Previews come from the shared thumbnail cache (~/.cache/thumbnails), which Files fills
+  // for every type it has a previewer for: images, PDFs, videos, music covers, Office
+  // documents... So any file Files shows a preview for gets the same one here (once Files
+  // has made it; we don't generate any). Images without one are shown themselves (slower
+  // for big photos); other files show their type icon. Whether the cache has one is
+  // checked by the dock's silent icon measurer (as for icon files, see Dock.qml's
+  // displayableIcon), so a missing cache file never makes an Image print "Cannot open".
   readonly property var cacheSources: {
-    if (!thumbnail) return []
+    if (!file || file.isDir) return []
     // The cache names a thumbnail after the MD5 of the file's URI, escaped the GLib way.
     var uri = ("file://" + encodeURI(file.path)).replace(/#/g, "%23").replace(/\?/g, "%3F")
     var hash = Qt.md5(uri)
@@ -34,22 +34,23 @@ Item {
   onCacheSourcesChanged: requestCacheChecks()
   Component.onCompleted: requestCacheChecks()
 
-  // The first cached thumbnail that loads, else the image itself; "" while still checking.
+  // The first cached thumbnail that loads, else the image itself (images only); "" for no
+  // preview, or while still checking.
   readonly property string thumbSource: {
-    if (!thumbnail) return ""
+    if (cacheSources.length === 0) return ""
     for (var i = 0; i < cacheSources.length; i++) {
       var known = dock.iconExtents[cacheSources[i]]
       if (known) return cacheSources[i]
       if (known === undefined) return ""
     }
-    return Util.fileUrl(file.path)
+    return file.image ? Util.fileUrl(file.path) : ""
   }
 
   width: size
   height: size
 
   Rectangle {
-    visible: fileIcon.thumbnail && thumb.status === Image.Ready
+    visible: fileIcon.thumbSource !== "" && thumb.status === Image.Ready
     anchors.centerIn: parent
     width: thumb.paintedWidth + 4
     height: thumb.paintedHeight + 4
@@ -61,12 +62,13 @@ Item {
 
   Image {
     id: thumb
-    visible: fileIcon.thumbnail
+    visible: fileIcon.thumbSource !== ""
     anchors.centerIn: parent
     width: Math.min(fileIcon.size - 6, fileIcon.maxWidth - 4)   // 4: the white frame
     height: fileIcon.size - 6
     fillMode: Image.PreserveAspectFit
     source: fileIcon.thumbSource
+    autoTransform: true          // photos' rotation tags (portrait phone photos stay upright)
     sourceSize.width: fileIcon.dock.iconSourceSize
     sourceSize.height: fileIcon.dock.iconSourceSize
     asynchronous: true
@@ -75,9 +77,9 @@ Item {
 
   Image {
     id: typeIcon
-    // The file-type icon: for non-images, while a thumbnail is still being looked up, and
-    // if the image itself can't be read.
-    visible: !fileIcon.thumbnail || fileIcon.thumbSource === "" || thumb.status === Image.Error
+    // The file-type icon: with no preview, while one is still being looked up, and if the
+    // image itself can't be read.
+    visible: fileIcon.thumbSource === "" || thumb.status === Image.Error
     anchors.fill: parent
     source: fileIcon.file ? fileIcon.dock.iconSource(fileIcon.file.icon) : ""
     // File-type icons wider than maxWidth (once measured) are scaled down to fit.

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Usage: list-folders.sh MAX DIR...  For each folder, its newest MAX entries by date added (see
-# below), newest first, as NUL-terminated records "<folder index>\t<mime type>\t<path>", after
+# below), newest first, as NUL-terminated records "<folder index>\t<mime type>\t<icon names,
+# comma-separated, best first>\t<path>", after
 # a "<folder index>\t#total\t<count>" record with how many entries the folder has in all. One
 # `file` call per folder identifies all types.
 #
@@ -22,7 +23,9 @@ for dir in "$@"; do
     mapfile -d '' sorted < <(
       # find picks the entries; stat reports their times (GNU find can't read creation
       # times on some systems and prints -1, stat can).
-      find "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' ! -name '*.part' ! -name '*.crdownload' ! -name '*.download' \
+      # (Hidden files and backup files ending in ~ are skipped, as Files hides them;
+      # unfinished downloads too.)
+      find "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' ! -name '*~' ! -name '*.part' ! -name '*.crdownload' ! -name '*.download' \
         -print0 2>/dev/null \
       | xargs -0 -r stat --printf '%i %.9W %.9Y %.9Z %n\0' -- 2>/dev/null \
       | awk -v cache="$cache" '
@@ -55,8 +58,21 @@ for dir in "$@"; do
     paths=()
     for rec in "${sorted[@]:0:$max}"; do paths+=("${rec#*$'\t'}"); done
     if [ ${#paths[@]} -gt 0 ]; then
-      mapfile -t mimes < <(file -b --mime-type -- "${paths[@]}" 2>/dev/null)
-      for k in "${!paths[@]}"; do printf '%s\t%s\t%s\0' "$i" "${mimes[$k]:-application/octet-stream}" "${paths[$k]}"; done
+      # Types and icon names the way Files sees them (GIO: by name and contents, so a .md
+      # file is text/markdown, not just text/plain), one "<type>\t<icons>" line per file in
+      # order. If gio doesn't answer for every file, `file` (contents only) does instead.
+      mapfile -t types < <(gio info -a standard::content-type,standard::icon -- "${paths[@]}" 2>/dev/null \
+        | awk '/^uri: / { if (n++) print type "\t" icons; type = ""; icons = "" }
+               /^  standard::content-type: / { sub(/^  standard::content-type: /, ""); type = $0 }
+               /^  standard::icon: / { sub(/^  standard::icon: /, ""); gsub(/, /, ","); icons = $0 }
+               END { if (n) print type "\t" icons }')
+      if [ ${#types[@]} -ne ${#paths[@]} ]; then
+        mapfile -t types < <(file -b --mime-type -- "${paths[@]}" 2>/dev/null | sed 's/$/\t/')
+      fi
+      for k in "${!paths[@]}"; do
+        type=${types[$k]:-application/octet-stream$'\t'}
+        printf '%s\t%s\t%s\t%s\0' "$i" "${type%%$'\t'*}" "${type#*$'\t'}" "${paths[$k]}"
+      done
     fi
   fi
   i=$((i+1))

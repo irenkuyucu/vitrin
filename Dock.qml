@@ -819,7 +819,9 @@ Item {
   // icon (the shape most piles show) rather than by its current files, so its slot keeps
   // one width as files come and go.
   function slotSourceFor(item, isFolder) {
-    if (isFolder && root.displayAsFor(item) === "stack") return root.iconSource("text-x-generic")
+    // (An empty folder shown as a stack shows its folder icon instead.)
+    if (isFolder && root.displayAsFor(item) === "stack" && root.filesFor(item).length > 0)
+      return root.iconSource("text-x-generic")
     return isFolder ? root.iconSource(root.folderIconFor(item)) : root.pickIcon(item.icons)
   }
 
@@ -851,7 +853,8 @@ Item {
   }
 
   function expandPath(path) {
-    return String(path).indexOf("~/") === 0 ? root.home + String(path).slice(1) : String(path)
+    var s = String(path)
+    return s === "~" || s.indexOf("~/") === 0 ? root.home + s.slice(1) : s
   }
 
   // Open windows grouped by app: { byKey: { key: [toplevel, ...] }, order: [key, ...] }.
@@ -1246,12 +1249,10 @@ Item {
   }
 
   // ------------------------------------------------------------ folder stacks
-  // Each folder (except Trash) has two options, saved per folder in the config file:
-  //   openAs:    "stack"  -> clicking shows its newest files in a grid above the icon
-  //              "folder" -> clicking opens it in Files
-  //   displayAs: "stack"  -> the dock icon shows its newest files piled up
+  // Clicking a folder (except Trash) shows its newest files in a stack above it;
+  // middle-click opens it in Files. Each folder has one option, saved in the config file:
+  //   displayAs: "stack"  -> the dock icon shows its newest files piled up (the default)
   //              "folder" -> the dock icon is the folder icon
-  // Both default to "stack", like Downloads on macOS.
   // Routine refreshes (each time the dock appears, and every 15 s with hiding off) list a
   // stack's first screenful (4 x 3), so a stack opens complete at once, and the dock icon's
   // pile takes its newest 3 from them (12 cost about 5% more than 3: ~6 ms in 1,000 files).
@@ -1260,12 +1261,70 @@ Item {
   readonly property int pileMax: 12
   readonly property int stackMax: 1000
 
-  function openAsFor(folder) {
-    return isTrash(folder) || folder.openAs === "folder" ? "folder" : "stack"
-  }
-
   function displayAsFor(folder) {
     return isTrash(folder) || folder.displayAs === "folder" ? "folder" : "stack"
+  }
+
+  // ------------------------------------------------------------ adding folders
+  // Folders dragged onto the dock (between the folders) get shortcuts there, with their
+  // own name and icon (as Files shows them, see scripts/folder-info.sh), displayed as a
+  // stack. Folders already in the dock aren't added again: their icons bounce instead.
+  signal folderBounce(string path)
+
+  function folderIndexOf(path) {
+    for (var i = 0; i < root.folders.length; i++)
+      if (expandPath(root.folders[i].path) === path) return i
+    return -1
+  }
+
+  // The first of GIO's icons for it that the icon theme has; "inode-directory" is a file
+  // type icon, so the folder icon goes before it.
+  function folderIconFromGio(icons) {
+    for (var i = 0; i < icons.length; i++) {
+      if (icons[i].indexOf("inode-directory") === 0) continue
+      if (Quickshell.iconPath(icons[i], true)) return icons[i]
+    }
+    return "folder"
+  }
+
+  // `infos`: [{ path, name, icons }]; `at`: position among the folders (before the Trash).
+  function addFolders(infos, at) {
+    var list = root.folders.slice()
+    var end = list.length > 0 && isTrash(list[list.length - 1]) ? list.length - 1 : list.length
+    at = at < 0 ? end : Math.min(at, end)
+    var added = 0
+    for (var i = 0; i < infos.length; i++) {
+      var info = infos[i]
+      if (folderIndexOf(info.path) !== -1) { root.folderBounce(info.path); continue }
+      var path = info.path.indexOf(root.home + "/") === 0 ? "~" + info.path.slice(root.home.length) : info.path
+      list.splice(at + added, 0, { name: info.name, icon: folderIconFromGio(info.icons), path: path, displayAs: "stack" })
+      added++
+    }
+    if (added === 0) return
+    root.folders = list
+    saveConfig()
+  }
+
+  // Remove from Dock, for any folder but the Trash (which always stays, last).
+  function removeFolder(path) {
+    if (path === "trash:///") return
+    root.folders = root.folders.filter(function(f) { return f.path !== path })
+    saveConfig()
+  }
+
+  // Reorder: the folder at `from` goes to `to` (both indexes in root.folders); the Trash
+  // stays last.
+  function moveFolder(from, to) {
+    var list = root.folders.slice()
+    var last = list.length - 1
+    if (list.length > 0 && isTrash(list[last])) last--
+    if (from < 0 || from > last || isTrash(list[from])) return
+    to = Math.max(0, Math.min(last, to))
+    if (to === from) return
+    var moved = list.splice(from, 1)[0]
+    list.splice(to, 0, moved)
+    root.folders = list
+    saveConfig()
   }
 
   function setFolderOption(path, key, value) {
@@ -1281,6 +1340,13 @@ Item {
   // Newest entries of each folder, by date added: { "/home/me/Downloads": [file, ...] }
   // with file = { path, name, isDir, mime, icon, image }.
   property var folderFiles: ({})
+  // Folders that can't be found (moved, renamed or deleted since): { dir: true }. They stay
+  // in the dock, dimmed, until they're back or removed.
+  property var missingFolders: ({})
+
+  function isMissing(folder) {
+    return !!folder && !isTrash(folder) && !!root.missingFolders[expandPath(folder.path)]
+  }
   property bool folderRefreshPending: false
 
   function filesFor(folder) {
@@ -1386,7 +1452,12 @@ Item {
   // Records are NUL-terminated "<folder index>\t<mime type>\t<icon names>\t<path>" (so any file name,
   // even one with a tab or line break in it, comes through intact).
   function applyFolderListing(dirs, text) {
-    assignIfChanged("folderFiles", parseFolderListing(dirs, text).files)
+    var listing = parseFolderListing(dirs, text)
+    assignIfChanged("folderFiles", listing.files)
+    // A folder that's there always gets a count, even when empty.
+    var missing = {}
+    for (var i = 0; i < dirs.length; i++) if (listing.totals[dirs[i]] === undefined) missing[dirs[i]] = true
+    assignIfChanged("missingFolders", missing)
   }
 
   // -> { files: { dir: [file, ...] }, totals: { dir: count } } (see scripts/list-folders.sh)
@@ -1556,7 +1627,7 @@ Item {
   // Trash and folders take dropped files; so do apps, except Files (like Finder on macOS,
   // it isn't a place to drop documents onto).
   function acceptsDrop(item, isFolder) {
-    if (isFolder) return isTrash(item) || expandPath(item.path).charAt(0) === "/"
+    if (isFolder) return isTrash(item) || (!isMissing(item) && expandPath(item.path).charAt(0) === "/")
     return !!item.entry && !isFixed(item.key)
   }
 
@@ -1640,53 +1711,95 @@ Item {
   //              page, value, key, checked }
   function menuRows(item, isFolder) {
     if (isFolder) {
-      var folderRows = [{ kind: "action", label: "Open in Files", act: "open" }]
-      if (isTrash(item)) {
-        folderRows.push({ kind: "separator" })
-        folderRows.push({ kind: "action", label: "Empty Trash…", act: "empty-ask", disabled: root.trashCount === 0 })
-      } else {
-        folderRows.push({ kind: "separator" })
-        folderRows.push({ kind: "submenu", label: "Open as", page: "openAs",
-                          value: openAsFor(item) === "stack" ? "Stack" : "Folder" })
-        folderRows.push({ kind: "submenu", label: "Display as", page: "displayAs",
-                          value: displayAsFor(item) === "stack" ? "Stack" : "Folder" })
-      }
-      return folderRows
+      if (isMissing(item)) return [
+        { kind: "text", label: "“" + (item.name || item.path) + "” can't be found." },
+        { kind: "text", label: "It may have been moved, renamed, or deleted.", secondary: true },
+        { kind: "separator" },
+        { kind: "action", label: "Remove from Dock", act: "remove-folder" }
+      ]
+      // Same order as the apps' menus: opening, then arranging, then the destructive one.
+      if (isTrash(item)) return joinMenuGroups([
+        [{ kind: "action", label: "Open in Files", act: "open" }],
+        [{ kind: "action", label: "Empty Trash…", act: "empty-ask", disabled: root.trashCount === 0 }]
+      ])
+      var arrange = [{ kind: "submenu", label: "Display as", page: "displayAs",
+                       value: displayAsFor(item) === "stack" ? "Stack" : "Folder" }]
+      var at = folderIndexOf(expandPath(item.path))
+      var lastMovable = root.folders.length - 1 - (root.folders.length > 0 && isTrash(root.folders[root.folders.length - 1]) ? 1 : 0)
+      if (at > 0) arrange.push({ kind: "action", label: "Move Left", act: "folder-left" })
+      if (at !== -1 && at < lastMovable) arrange.push({ kind: "action", label: "Move Right", act: "folder-right" })
+      arrange.push({ kind: "action", label: "Remove from Dock", act: "remove-folder" })
+      return joinMenuGroups([[{ kind: "action", label: "Open in Files", act: "open" }], arrange])
     }
 
-    var rows = []
+    // Its windows; opening (New Window and the app's own actions); arranging; Quit.
+    var windows = []
     for (var i = 0; i < item.windows.length; i++) {
       var w = item.windows[i]
-      rows.push({ kind: "window", label: windowLabel(w), toplevel: w, current: w.activated })
+      windows.push({ kind: "window", label: windowLabel(w), toplevel: w, current: w.activated })
     }
-    if (rows.length > 0) rows.push({ kind: "separator" })
 
-    if (item.entry) rows.push({ kind: "action", label: "New Window", act: "new" })
+    var open = item.entry ? appActionRows(item) : []
+
+    var arrange = []
     if (!isFixed(item.key)) {
-      if (item.pinned) rows.push({ kind: "action", label: "Remove from Dock", act: "unpin" })
-      else if (item.entry) rows.push({ kind: "action", label: "Keep in Dock", act: "pin" })
-      if (isRecent(item.key)) rows.push({ kind: "action", label: "Remove from Dock", act: "forget" })
-
       // Only pinned apps move (the middle section keeps its order). Position 0 belongs to
       // Files, so the app right after it can't move left.
       var index = root.pins.indexOf(item.key)
-      if (index > 1) rows.push({ kind: "action", label: "Move Left", act: "left" })
-      if (index !== -1 && index < root.pins.length - 1) rows.push({ kind: "action", label: "Move Right", act: "right" })
+      if (index > 1) arrange.push({ kind: "action", label: "Move Left", act: "left" })
+      if (index !== -1 && index < root.pins.length - 1) arrange.push({ kind: "action", label: "Move Right", act: "right" })
+      if (!item.pinned && item.entry) arrange.push({ kind: "action", label: "Keep in Dock", act: "pin" })
+      if (item.pinned) arrange.push({ kind: "action", label: "Remove from Dock", act: "unpin" })
+      else if (isRecent(item.key)) arrange.push({ kind: "action", label: "Remove from Dock", act: "forget" })
     }
 
-    if (item.windows.length > 0) {
-      rows.push({ kind: "separator" })
-      rows.push({ kind: "action", label: "Quit", act: "quit" })
+    var quit = item.windows.length > 0 ? [{ kind: "action", label: "Quit", act: "quit" }] : []
+    return joinMenuGroups([windows, open, arrange, quit])
+  }
+
+  // Non-empty groups of rows, with a separator between each two.
+  function joinMenuGroups(groups) {
+    var rows = []
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].length === 0) continue
+      if (rows.length > 0) rows.push({ kind: "separator" })
+      rows = rows.concat(groups[i])
     }
     return rows
   }
 
-  // Second page of a folder's menu ("Open as" / "Display as"), slid in like the submenus
-  // in the Files app's menus.
+  // New Window, then the actions the app lists in its desktop entry (New Private Window,
+  // New Incognito Window, ...), as GNOME's dock shows them. An app's own "New Window"
+  // action replaces the dock's (except for terminals, opened the Omarchy way).
+  function appActionRows(item) {
+    var actions = item.entry.actions || []
+    var rows = []
+    var ownNew = null
+    for (var i = 0; i < actions.length; i++) {
+      var a = actions[i]
+      if (!a || !a.name) continue
+      if (a.id === "new-window" || String(a.name).toLowerCase() === "new window") { ownNew = a; continue }
+      rows.push({ kind: "action", label: a.name, act: "desktop-action", actionId: a.id })
+    }
+    var useOwn = ownNew && !isTerminal(item.key)
+    rows.unshift(useOwn ? { kind: "action", label: "New Window", act: "desktop-action", actionId: ownNew.id }
+                        : { kind: "action", label: "New Window", act: "new" })
+    return rows
+  }
+
+  // One of the app's desktop entry actions, the Omarchy way (see scripts/launch.sh).
+  function runAppAction(item, actionId) {
+    if (!item.entry) return
+    markLaunching(item)
+    Util.execArgv(["bash", root.script("launch.sh"), item.entry.id + ":" + actionId])
+  }
+
+  // Second page of a folder's menu ("Display as"), slid in like the submenus in the Files
+  // app's menus.
   function folderSubmenuRows(folder, page) {
-    var current = page === "openAs" ? openAsFor(folder) : displayAsFor(folder)
+    var current = displayAsFor(folder)
     return [
-      { kind: "back", label: page === "openAs" ? "Open as" : "Display as" },
+      { kind: "back", label: "Display as" },
       { kind: "separator" },
       { kind: "choice", label: "Stack", key: page, value: "stack", checked: current === "stack" },
       { kind: "choice", label: "Folder", key: page, value: "folder", checked: current === "folder" }
@@ -1726,6 +1839,10 @@ Item {
       case "open": openFolder(item); break
       case "new": launch(item); break
       case "unpin": unpin(item.key); break
+      case "remove-folder": removeFolder(item.path); break
+      case "desktop-action": runAppAction(item, row.actionId); break
+      case "folder-left": moveFolder(folderIndexOf(expandPath(item.path)), folderIndexOf(expandPath(item.path)) - 1); break
+      case "folder-right": moveFolder(folderIndexOf(expandPath(item.path)), folderIndexOf(expandPath(item.path)) + 1); break
       case "forget": forgetRecent(item.key); break
       case "pin": pin(item.key); break
       case "left": move(item.key, -1); break
@@ -1827,9 +1944,14 @@ Item {
       property real dragX: 0
       property string dragIcon: ""            // icon url (or the letter tile)
       property string dragName: ""
+      property var dragFiles: []              // a stack folder's pile, drawn on the dragged copy
+      property bool dragMissing: false        // a folder that can't be found (dimmed, "?")
       // Slot width of the dragged icon, at the current size (which can change mid-drag: see
       // dockWidthFor).
-      readonly property real dragWidth: win.dragFrom !== -1 ? root.slotWidthFor(root.iconSource(win.dragIcon), win.size) : 0
+      readonly property real dragWidth: win.dragFrom !== -1 ? root.slotWidthFor(win.dragSlot, win.size) : 0
+      property string dragSlot: ""            // the dragged icon's sizing icon (see slotSourceFor)
+      // A folder is being dragged (dragFrom/dragTo are then indexes into root.folders).
+      property bool dragFolder: false
       // Set for the moment a pulled-out icon is removed: everything is already where it
       // belongs, so the slide-aside offsets are dropped without animating.
       property bool snapShifts: false
@@ -1846,6 +1968,7 @@ Item {
       // The icons' actual width, including slots growing in or shrinking away, plus the
       // dock's end padding: what the outline follows. (dockWidthFor is the settled width.)
       readonly property real rowWidth: row.implicitWidth + root.leftPadFor(win.size) + root.rightPadFor(win.size)
+        + win.dropGap
 
       // Drag out to remove (pinned apps other than Files): pull the icon this far above
       // the dock and "Remove" appears; letting go there removes it from the dock.
@@ -1862,6 +1985,123 @@ Item {
       // Files dragged over the dock from another app (Files, browser, ...)
       property int dropDepth: 0
 
+      // Folders dragged over the dock: which of the dragged items are folders (looked up
+      // when the drag comes in), and where among the folders a gap is open for them (-1:
+      // none). One gap however many there are; they're all added there, in order.
+      property string dropKey: ""
+      property var dropInfo: null            // { key, folders: [{ path, name, icons }] }
+      property int dropInsert: -1
+      property real dropRowX: 0              // last pointer position over the folders
+      property bool dropOverFolders: false
+      // The spot right before the Trash opens only once the pointer stays there a moment,
+      // like macOS: otherwise reaching for the Trash would push it away from under the
+      // pointer. Every other spot opens right away, and an open gap follows the pointer.
+      property int dropPendingInsert: -1
+      Timer {
+        id: gapDwell
+        interval: 200
+        onTriggered: if (win.dropOverFolders) win.dropInsert = win.dropPendingInsert
+      }
+      // Over the middle of a folder's icon (see DockButton). The gap stays open meanwhile:
+      // closing it would slide the folders under the pointer, onto another spot.
+      property int dropOnFolderIcon: 0
+      function settleDropGap() {
+        Qt.callLater(function() {
+          if (!win.dropOverFolders && win.dropOnFolderIcon === 0) win.dropInsert = -1
+        })
+      }
+      property int pendingInsert: -2         // a drop waiting for the lookup (-2: none)
+      readonly property bool dropHasFolders: !!dropInfo && dropInfo.key === dropKey && dropInfo.folders.length > 0
+      readonly property bool dropHasNewFolders: dropHasFolders && dropInfo.folders.some(function(f) {
+        return root.folderIndexOf(f.path) === -1
+      })
+      // New folders show as stacks: their slot is a stack's.
+      readonly property string dropGapSource: root.iconSource("text-x-generic")
+      readonly property real dropGapWidth: root.slotWidthFor(win.dropGapSource, win.size)
+      property real dropGap: dropInsert >= 0 ? dropGapWidth : 0
+      Behavior on dropGap {
+        enabled: !win.snapShifts
+        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+      }
+      onDropInfoChanged: if (win.dropOverFolders) win.updateDropInsert(win.dropRowX)
+
+      Process {
+        id: folderInfo
+        property string key: ""
+        stdout: StdioCollector {
+          onStreamFinished: {
+            var folders = []
+            var lines = text.split("\n")
+            for (var i = 0; i < lines.length; i++) {
+              var f = lines[i].split("\t")
+              if (f.length < 3) continue
+              folders.push({ path: f[0], name: f[1], icons: f[2].split(",") })
+            }
+            win.dropInfo = { key: folderInfo.key, folders: folders }
+            if (win.pendingInsert !== -2) {
+              if (folderInfo.key === win.dropKey) root.addFolders(folders, win.pendingInsert)
+              win.pendingInsert = -2
+            }
+          }
+        }
+      }
+
+      function lookUpDrop(urls) {
+        var key = Array.prototype.map.call(urls, String).join("\n")
+        if (key === win.dropKey) return
+        win.dropKey = key
+        win.dropInfo = null
+        var paths = Array.prototype.map.call(urls, root.localPath).filter(function(p) { return p.charAt(0) === "/" })
+        if (paths.length === 0) { win.dropInfo = { key: key, folders: [] }; return }
+        folderInfo.running = false
+        folderInfo.key = key
+        folderInfo.command = ["bash", root.script("folder-info.sh")].concat(paths)
+        folderInfo.running = true
+      }
+
+      // Where the gap for dragged folders opens: before or after the folder under the
+      // pointer, whichever half it's on (decided on the dock without the gap, so the gap
+      // stays put while the pointer is in it). Never after the Trash.
+      function updateDropInsert(rowX) {
+        win.dropRowX = rowX
+        if (!win.dropHasFolders) { win.dropInsert = -1; return }
+        var start = divider.x + divider.width
+        var widths = root.folders.map(function(f) { return root.slotWidthFor(root.slotSourceFor(f, true), win.size) })
+        if (win.dropInsert >= 0) {
+          var gapLeft = start
+          for (var j = 0; j < win.dropInsert; j++) gapLeft += widths[j]
+          if (rowX >= gapLeft && rowX <= gapLeft + win.dropGapWidth) return
+          if (rowX > gapLeft + win.dropGapWidth) rowX -= win.dropGapWidth
+        }
+        var count = root.folders.length
+        var end = count > 0 && root.isTrash(root.folders[count - 1]) ? count - 1 : count
+        var at = count
+        var left = start
+        for (var i = 0; i < count; i++) {
+          if (rowX < left + widths[i]) { at = rowX < left + widths[i] / 2 ? i : i + 1; break }
+          left += widths[i]
+        }
+        at = Math.max(0, Math.min(end, at))
+        var beforeTrash = end < count && at === end
+        if (!beforeTrash) {
+          gapDwell.stop()
+          win.dropInsert = at
+          return
+        }
+        if (win.dropInsert === at) return
+        // A gap open elsewhere stays put meanwhile (closing it would slide the folders
+        // under the pointer).
+        if (win.dropPendingInsert !== at || !gapDwell.running) {
+          win.dropPendingInsert = at
+          gapDwell.restart()
+        }
+      }
+
+      function dropFoldersAt(at) {
+        if (win.dropHasFolders) root.addFolders(win.dropInfo.folders, at)
+        else if (!win.dropInfo || win.dropInfo.key !== win.dropKey) win.pendingInsert = at
+      }
+
       // Divider resizing: while dragging, the dock is only scaled visually (cheap: no
       // re-layout, no window resize per step); the real size is applied once on release.
       property int resizePreview: 0          // previewed icon size; 0 = not resizing
@@ -1874,10 +2114,11 @@ Item {
       function dockWidthFor(size) {
         var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
         // Before the middle section (not while its only app is being pulled out).
-        if (root.hasMiddle && !(win.dragRemoving && root.middle.length === 1 && win.dragFrom >= root.middleStart))
+        if (root.hasMiddle && !(win.dragRemoving && !win.dragFolder && root.middle.length === 1 && win.dragFrom >= root.middleStart))
           width += root.dividerWidthFor(size)
         for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
-        if (win.dragRemoving) width -= root.slotWidthFor(root.iconSource(win.dragIcon), size)
+        if (win.dragRemoving) width -= root.slotWidthFor(win.dragSlot, size)
+        if (win.dropInsert >= 0) width += root.slotWidthFor(win.dropGapSource, size)
         return width + root.leftPadFor(size) + root.rightPadFor(size)
       }
       function dockHeightFor(size) { return root.slotHeightFor(size) + (root.padFor(size) + 1) * 2 }
@@ -2000,8 +2241,9 @@ Item {
           win.closeStack()
           return
         }
-        if (root.openAsFor(folder) === "stack") win.openStack(button, folder)
-        else root.openFolder(folder)
+        if (root.isMissing(folder)) win.openMenu(button, folder, true)   // explains, offers removal
+        else if (root.isTrash(folder)) root.openFolder(folder)
+        else win.openStack(button, folder)
       }
 
       function openStack(button, folder) {
@@ -2066,7 +2308,10 @@ Item {
         // Apps opening or closing mid-drag rebuild the icons; drop the drag rather than
         // move the wrong one.
         function onItemsChanged() {
-          if (win.dragFrom !== -1) win.cancelDrag()
+          if (win.dragFrom !== -1 && !win.dragFolder) win.cancelDrag()
+        }
+        function onFoldersChanged() {
+          if (win.dragFrom !== -1 && win.dragFolder) win.cancelDrag()
         }
 
       }
@@ -2082,9 +2327,33 @@ Item {
         win.dragRemovable = !!item && !root.isFixed(item.key) && item.windows.length === 0
           && (item.pinned || root.isRecent(item.key))
         win.dragTopY = zone.y + dockBox.y
+        win.dragSlot = root.iconSource(icon)
+        win.dragFiles = []
+        win.dragMissing = false
+        win.dragFolder = false
         win.dragFrom = index
         win.dragTo = index
         win.dragToPinned = false
+      }
+
+      // Folders move among the folders; any but the Trash (always last) can be pulled out.
+      function beginFolderDrag(index, icon, slotUrl, files) {
+        var folder = root.folders[index]
+        if (!folder || root.isTrash(folder)) return false
+        win.tipText = ""
+        win.dragFiles = files || []
+        win.dragMissing = root.isMissing(folder)
+        // A pile is drawn at its slot's size (see DockButton).
+        win.dragIcon = win.dragFiles.length > 0 ? slotUrl : icon
+        win.dragName = folder.name || ""
+        win.dragRemovable = true
+        win.dragTopY = zone.y + dockBox.y
+        win.dragSlot = slotUrl
+        win.dragFolder = true
+        win.dragToPinned = false
+        win.dragFrom = index
+        win.dragTo = index
+        return true
       }
 
       // `point` is in the app row's coordinates.
@@ -2132,6 +2401,7 @@ Item {
       // otherwise stays where it is: the middle section keeps its own order.
       function updateDragTarget(rowX) {
         win.dragX = rowX
+        if (win.dragFolder) { updateFolderDragTarget(rowX); return }
         var from = win.dragFrom
         var pinnedCount = root.middleStart
         var fromMiddle = from >= pinnedCount
@@ -2171,7 +2441,31 @@ Item {
         win.dragTo = Math.max(1, Math.min(last, best))
       }
 
+      // Where a dragged folder would land among the other folders (the Trash stays last).
+      // Over the apps, that's the first spot: like apps over the folders, it lands at the
+      // nearest end of its own section.
+      function updateFolderDragTarget(rowX) {
+        var from = win.dragFrom
+        var start = divider.x + divider.width
+        var count = root.folders.length
+        var last = count - 1
+        if (count > 0 && root.isTrash(root.folders[count - 1])) last--
+        var best = from
+        var bestDistance = Infinity
+        var left = start
+        var k = 0
+        for (var i = 0; i <= last + 1 && k <= last; i++) {
+          if (i === from) continue
+          var distance = Math.abs(rowX - (left + win.dragWidth / 2))
+          if (distance < bestDistance) { bestDistance = distance; best = k }
+          if (i < count) left += root.slotWidthFor(root.slotSourceFor(root.folders[i], true), win.size)
+          k++
+        }
+        win.dragTo = Math.max(0, Math.min(last, best))
+      }
+
       function endDrag() {
+        if (win.dragFolder) { endFolderDrag(); return }
         win.autoScrollSpeed = 0
         var from = win.dragFrom
         var to = win.dragTo
@@ -2208,22 +2502,62 @@ Item {
         hideTimer.restart()
       }
 
+      function endFolderDrag() {
+        win.autoScrollSpeed = 0
+        var from = win.dragFrom
+        var to = win.dragTo
+        var removing = win.dragRemoving
+        if (removing) poof.play(dragGhost.x, dragGhost.y, dragGhost.source, dragGhost.width, win.dragFiles,
+                                root.artWidthFor(root.iconSource(win.dragIcon), win.size))
+        win.snapShifts = true
+        Qt.callLater(function() { win.snapShifts = false })
+        win.dragFrom = -1
+        win.dragTo = -1
+        win.dragFolder = false
+        win.dragFiles = []
+        var folder = root.folders[from]
+        if (folder) {
+          if (removing) root.removeFolder(folder.path)
+          else if (to !== from) root.moveFolder(from, to)
+        }
+        hideTimer.restart()
+      }
+
       function cancelDrag() {
         win.autoScrollSpeed = 0
+        win.dragFolder = false
         win.dragToPinned = false
         win.dragFrom = -1
         win.dragTo = -1
         hideTimer.restart()
       }
 
-      function dropEnter() {
+      function dropEnter(d) {
         win.dropDepth += 1
+        if (d && d.hasUrls) win.lookUpDrop(d.urls)
         win.reveal()
       }
 
       function dropLeave() {
         win.dropDepth = Math.max(0, win.dropDepth - 1)
+        // (Checked after the event: moving from one drop area to the next can leave the
+        // old one before entering the new one.)
+        if (win.dropDepth === 0) Qt.callLater(function() {
+          if (win.dropDepth !== 0) return
+          win.dropInsert = -1
+          win.dropPendingInsert = -1
+          gapDwell.stop()
+          win.dropOverFolders = false
+          win.dropOnFolderIcon = 0
+          dropForget.restart()
+        })
         hideTimer.restart()
+      }
+      // The next drag is looked up afresh (the folders may have changed by then).
+      Timer {
+        id: dropForget
+        interval: 1000
+        onTriggered: if (win.dropDepth === 0 && win.pendingInsert === -2) win.dropKey = ""
       }
 
       function closeMenu(byOutsideClick) {
@@ -2281,7 +2615,7 @@ Item {
         DropArea {
           anchors.fill: parent
           keys: ["text/uri-list"]
-          onEntered: win.dropEnter()
+          onEntered: function(d) { win.dropEnter(d) }
           onExited: win.dropLeave()
           onDropped: function(drop) { win.dropLeave() }
         }
@@ -2360,6 +2694,47 @@ Item {
 
             readonly property real maxX: Math.max(0, contentWidth - width)
 
+          // Folders dragged in between the folders (or onto the edges of their icons; the
+          // middle of an icon moves them into that folder, see DockButton) get shortcuts
+          // there. Under the icons, so their own drop areas come first.
+          DropArea {
+            x: row.x + divider.x
+            y: 0
+            width: win.rowWidth - x
+            height: rowView.height
+            visible: root.folders.length > 0
+            keys: ["text/uri-list"]
+            function rowX(d) { return d.x + x - row.x }
+            onEntered: function(d) {
+              win.dropEnter(d)
+              d.accept(Qt.CopyAction)
+              win.dropOverFolders = true
+              win.updateDropInsert(rowX(d))
+            }
+            onPositionChanged: function(d) { win.updateDropInsert(rowX(d)) }
+            onExited: {
+              win.dropOverFolders = false
+              win.settleDropGap()
+              win.dropLeave()
+            }
+            onDropped: function(d) {
+              d.accept(Qt.CopyAction)
+              // (Dropped before the gap had time to open: where it would have opened.)
+              var at = gapDwell.running || win.dropInsert < 0 ? win.dropPendingInsert : win.dropInsert
+              gapDwell.stop()
+              // New shortcuts take the gap's place without sliding; with nothing new (only
+              // folders already in the dock, which bounce), the gap eases closed.
+              if (win.dropHasNewFolders) {
+                win.snapShifts = true
+                Qt.callLater(function() { win.snapShifts = false })
+              }
+              win.dropFoldersAt(at)
+              win.dropOverFolders = false
+              win.dropInsert = -1
+              win.dropLeave()
+            }
+          }
+
           Row {
             id: row
             // Pinned to the left padding rather than centered, so a dock that shrinks while
@@ -2399,7 +2774,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               // Slides left with the folders while an app is being pulled out to remove.
               transform: Translate {
-                x: win.dragRemoving ? -win.dragWidth : 0
+                x: win.dragRemoving && !win.dragFolder ? -win.dragWidth : 0
                 Behavior on x {
                   enabled: !win.snapShifts
                   NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
@@ -2411,10 +2786,12 @@ Item {
               model: root.folders
               delegate: DockButton {
                 required property var modelData
+                required property int index
                 dock: root
                 window: win
                 item: modelData
                 isFolder: true
+                folderIndex: index
               }
             }
           }
@@ -2516,7 +2893,7 @@ Item {
           height: width
           sourceSize.width: root.iconSourceSize
           sourceSize.height: root.iconSourceSize
-          source: root.displayableIcon(root.iconSource(win.dragIcon))
+          source: win.dragFiles.length > 0 ? "" : root.displayableIcon(root.iconSource(win.dragIcon))
           smooth: true
           readonly property real dockLeft: zone.x + dockBox.x
           readonly property real restingY: zone.y + dockBox.y + row.y + root.padFor(win.size) - 1
@@ -2529,7 +2906,28 @@ Item {
             : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset))
           y: dragLayer.offsetY + artOffsetY
              + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
-          opacity: win.dragRemoving ? 0.7 : 1
+          opacity: (win.dragRemoving ? 0.7 : 1) * (win.dragMissing ? 0.4 : 1)
+        }
+
+        MissingBadge {
+          visible: dragGhost.visible && win.dragMissing
+          dock: root
+          iconSize: dragGhost.width
+          x: dragGhost.x + dragGhost.width - width * 0.85
+          y: dragGhost.y + dragGhost.height - height * 0.85
+        }
+
+        FilePile {
+          visible: dragGhost.visible && win.dragFiles.length > 0
+          x: dragGhost.x
+          y: dragGhost.y
+          width: dragGhost.width
+          height: dragGhost.height
+          dock: root
+          files: win.dragFiles
+          size: dragGhost.width
+          artWidth: root.artWidthFor(root.iconSource(win.dragIcon), win.size)
+          opacity: dragGhost.opacity
         }
 
         LetterIcon {
@@ -2563,17 +2961,35 @@ Item {
         }
 
         // Removal "poof": the icon puffs up and fades where it was let go.
-        Image {
+        Item {
           id: poof
           visible: false
           width: root.iconSize
           height: root.iconSize
-          sourceSize.width: root.iconSourceSize
-          sourceSize.height: root.iconSourceSize
-          smooth: true
+          property alias source: poofImage.source
+          property var files: []
+          property real artWidth: width
 
-          function play(px, py, src, size) {
-            poof.source = src
+          Image {
+            id: poofImage
+            anchors.fill: parent
+            visible: poof.files.length === 0
+            sourceSize.width: root.iconSourceSize
+            sourceSize.height: root.iconSourceSize
+            smooth: true
+          }
+          FilePile {
+            anchors.fill: parent
+            dock: root
+            files: poof.files
+            size: poof.width
+            artWidth: poof.artWidth
+          }
+
+          function play(px, py, src, size, files, artWidth) {
+            poof.files = files || []
+            poof.artWidth = artWidth || size
+            poof.source = poof.files.length > 0 ? "" : src
             poof.width = size
             poof.height = size
             poof.x = px

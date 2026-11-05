@@ -12,6 +12,7 @@ Item {
   required property var item
   property bool isFolder: false
   property int slot: -1                  // position in the app row (apps only)
+  property int folderIndex: -1           // position among the folders (folders only)
   property bool isLeaving: false         // closing: shrinks away, then is removed
   property bool animateIn: false         // just opened: grows in
 
@@ -30,9 +31,15 @@ Item {
   onIsLeavingChanged: if (isLeaving) { appearAnimation.stop(); appearAnimation.to = 0; appearAnimation.start() }
 
   readonly property bool running: !isFolder && item.windows.length > 0
+  readonly property bool missing: isFolder && dock.isMissing(item)
+  // Holding a drag over it brings it forward (see springTimer): running apps, and Files
+  // even when it isn't running.
+  readonly property bool springs: !isFolder && (running || dock.isFixed(item.key))
   readonly property bool launching: !isFolder && dock.isLaunching(item.key)
   readonly property bool acceptsFiles: dock.acceptsDrop(item, isFolder)
-  readonly property bool beingDragged: !isFolder && slot !== -1 && window.dragFrom === slot
+  readonly property bool beingDragged: window.dragFrom !== -1 && (isFolder
+    ? window.dragFolder && folderIndex !== -1 && window.dragFrom === folderIndex
+    : !window.dragFolder && slot !== -1 && window.dragFrom === slot)
   readonly property string label: item.name || ""
   // Apps pick the first of their icon candidates that works (see "icon fallbacks").
   readonly property string iconUrl: isFolder ? dock.iconSource(dock.folderIconFor(item)) : dock.pickIcon(item.icons)
@@ -49,11 +56,23 @@ Item {
   // a gap where it would land. While it's being pulled out to remove, close up the gap it
   // leaves instead.
   readonly property real dragShift: {
-    if (window.dragFrom === -1 || beingDragged) return 0
+    // Folders dragged in from elsewhere: the folders from the gap on move right.
+    if (window.dragFrom === -1)
+      return isFolder && window.dropInsert >= 0 && folderIndex >= window.dropInsert ? window.dropGapWidth : 0
+    if (beingDragged) return 0
     var from = window.dragFrom
+    var to = window.dragTo
+    if (window.dragFolder) {
+      // Apps stay put; the folders after it close up when it's pulled out, or make room.
+      if (!isFolder) return 0
+      var i = folderIndex
+      if (window.dragRemoving) return i > from ? -window.dragWidth : 0
+      if (to > from && i > from && i <= to) return -window.dragWidth
+      if (to < from && i >= to && i < from) return window.dragWidth
+      return 0
+    }
     if (window.dragRemoving) return (isFolder || slot > from) ? -window.dragWidth : 0
     if (isFolder) return 0
-    var to = window.dragTo
     // A middle-section app dragged in among the pinned apps: everything from its landing
     // spot up to where it came from moves right to make room (the divider too, see below).
     if (window.dragToPinned) return slot >= to && slot < from ? window.dragWidth : 0
@@ -70,7 +89,7 @@ Item {
     && dock.hasMiddle && slot === dock.middleStart
   // Pulling out the middle section's only app takes the whole section with it: the divider
   // closes up too, while it's held out (see Dock.qml's dockWidthFor).
-  readonly property bool sectionGoing: beingDragged && window.dragRemoving && dock.middle.length === 1
+  readonly property bool sectionGoing: beingDragged && !isFolder && window.dragRemoving && dock.middle.length === 1
   property real sectionGap: sectionStart && !sectionGoing ? dock.dividerWidthFor(window.size) : 0
   Behavior on sectionGap {
     enabled: button.window.dragFrom !== -1 && !button.window.snapShifts
@@ -109,9 +128,8 @@ Item {
     ? dock.filesFor(item).slice(0, 3) : []
   readonly property bool showStack: stackFiles.length > 0
 
-  // Like macOS, the pile is drawn to fit the slot rather than the slot growing to fit the
-  // pile: it never gets wider than the slot's artwork (a document icon's width), so the
-  // gaps stay even and nothing shifts when a wider file (a landscape photo) arrives.
+  // The pile is drawn to fit the slot (see FilePile), so the gaps stay even and nothing
+  // shifts when a wider file (a landscape photo) arrives.
   readonly property real artWidth: dock.artWidthFor(slotUrl, window.size)
 
   DockDivider {
@@ -153,7 +171,8 @@ Item {
     // uneven or reach over the neighbours.)
     // (Hidden while it's being dragged: the dragged copy follows the pointer instead.)
     opacity: button.beingDragged ? 0
-      : (mouse.pressed && !mouse.dragging && !mouse.suppressClick) || drop.containsDrag ? 0.6 : 1
+      : ((mouse.pressed && !mouse.dragging && !mouse.suppressClick) || (drop.containsDrag && (button.acceptsFiles || button.springs)) ? 0.6 : 1)
+        * (button.missing ? 0.4 : 1)
     Behavior on opacity { NumberAnimation { duration: 80 } }
 
     transform: Translate { id: bounce; y: 0 }
@@ -176,24 +195,53 @@ Item {
       size: button.drawSize
     }
 
-    // The pile: oldest of the three at the back, slightly turned; newest on top.
-    Repeater {
-      model: button.showStack ? button.stackFiles.slice().reverse() : []
-      delegate: FileIcon {
-        required property var modelData
-        required property int index
-        readonly property int depth: button.stackFiles.length - 1 - index   // 0 = newest
-        dock: button.dock
-        file: modelData
-        size: button.drawSize
-        // Tilted files behind the top one need a little more room for the same width.
-        maxWidth: button.artWidth - (depth === 0 ? 0 : Math.round(button.drawSize * 0.12))
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: (parent.height - height) / 2 + 2 - depth * 3
-        rotation: depth === 0 ? 0 : (depth === 1 ? -7 : 7)
-        opacity: 1 - depth * 0.12
-      }
+    FilePile {
+      anchors.fill: parent
+      dock: button.dock
+      files: button.showStack ? button.stackFiles : []
+      size: button.drawSize
+      artWidth: button.artWidth
     }
+  }
+
+  Timer {
+    id: springTimer
+    interval: 1000
+    onTriggered: {
+      if (!drop.containsDrag) return
+      var windows = button.item.windows || []
+      if (windows.length === 0) {
+        // Files, not running: a new window, at the home folder.
+        if (button.dock.isFixed(button.item.key)) button.dock.openFolder({ path: "~" })
+        return
+      }
+      for (var i = 0; i < windows.length; i++) if (windows[i].activated) return   // already in front
+      button.dock.focusWindow(windows[0], button.window.screen)
+    }
+  }
+
+  // A folder that can't be found: a question mark on its dimmed icon.
+  MissingBadge {
+    visible: button.missing && !button.beingDragged
+    dock: button.dock
+    iconSize: button.drawSize
+    x: iconBox.x + iconBox.width - width * 0.85
+    y: iconBox.y + iconBox.height - height * 0.85
+  }
+
+  // A folder that's already in the dock bounces when it's dragged onto the dock again.
+  Connections {
+    target: button.dock
+    enabled: button.isFolder
+    function onFolderBounce(path) {
+      if (button.dock.expandPath(button.item.path) === path) folderBounce.restart()
+    }
+  }
+  SequentialAnimation {
+    id: folderBounce
+    loops: 2
+    NumberAnimation { target: bounce; property: "y"; to: -Math.round(window.size * 0.33); duration: 280; easing.type: Easing.OutQuad }
+    NumberAnimation { target: bounce; property: "y"; to: 0; duration: 280; easing.type: Easing.InQuad }
   }
 
   // Launch feedback: bounce until the app's window shows up.
@@ -249,11 +297,16 @@ Item {
     }
 
     onPositionChanged: function(m) {
-      // Folders and Files (always first) stay put.
-      if (button.isFolder || button.dock.isFixed(button.item.key) || !(m.buttons & Qt.LeftButton)) return
+      // Files (always first) and the Trash (always last) stay put.
+      if (!(m.buttons & Qt.LeftButton)) return
+      if (button.isFolder ? button.dock.isTrash(button.item) : button.dock.isFixed(button.item.key)) return
       if (!dragging && Math.abs(m.x - pressX) + Math.abs(m.y - pressY) > dragThreshold) {
+        if (button.isFolder) {
+          if (!button.window.beginFolderDrag(button.folderIndex, button.iconUrl, button.slotUrl, button.stackFiles)) return
+        } else {
+          button.window.beginDrag(button.slot, button.iconUrl)
+        }
         dragging = true
-        button.window.beginDrag(button.slot, button.iconUrl)
       }
       if (dragging) button.window.updateDrag(mapToItem(button.window.dragRow, m.x, m.y))
     }
@@ -278,6 +331,10 @@ Item {
       }
       if (m.button === Qt.RightButton) {
         button.window.openMenu(button, button.item, button.isFolder)
+      } else if (button.missing) {
+        button.window.folderClicked(button, button.item)
+      } else if (button.isFolder && m.button === Qt.MiddleButton) {
+        button.dock.openFolder(button.item)        // middle-click: open it in Files
       } else if (button.isFolder) {
         button.window.folderClicked(button, button.item)
       } else if (m.button === Qt.MiddleButton) {
@@ -292,20 +349,40 @@ Item {
   // them into it, or copies them when they're on another drive; onto an app opens them
   // with it. Accepted as a "copy" so the app the files came from never deletes them
   // itself; the dock does any moving, and Trash moves can be undone from the Trash.
+  // While folders are dragged, only the middle of a folder's icon takes them (moving them
+  // into it); its edges are for adding them to the dock (see Dock.qml's folder drop area).
+  // Spring-loading: holding a drag over a running app's icon for a second brings its window
+  // forward, to drop the files there instead (Files too, though it takes no drops on its icon).
   DropArea {
     id: drop
+    readonly property real inset: button.isFolder && button.window.dropHasFolders ? Math.round(button.fullWidth / 4) : 0
     anchors.fill: parent
-    anchors.leftMargin: button.contentLeft
-    enabled: button.acceptsFiles
+    anchors.leftMargin: button.contentLeft + inset
+    // The Trash, always last, also takes what's dropped past it, up to the end of the
+    // dock's hover area: nothing can be added after it, so no gap opens there.
+    anchors.rightMargin: button.dock.isTrash(button.item) && button.isFolder
+      ? -(button.dock.rightPadFor(button.window.size) + button.dock.hoverSlack) : inset
+    enabled: button.acceptsFiles || button.springs
     keys: ["text/uri-list"]
     onEntered: function(d) {
-      button.window.dropEnter()
+      button.window.dropEnter(d)
       d.accept(Qt.CopyAction)
+      if (button.springs) springTimer.restart()
+      if (button.isFolder) button.window.dropOnFolderIcon++
     }
-    onExited: button.window.dropLeave()
-    onDropped: function(d) {
+    onExited: {
+      springTimer.stop()
+      if (button.isFolder) {
+        button.window.dropOnFolderIcon = Math.max(0, button.window.dropOnFolderIcon - 1)
+        button.window.settleDropGap()
+      }
       button.window.dropLeave()
-      if (!d.hasUrls) return
+    }
+    onDropped: function(d) {
+      springTimer.stop()
+      if (button.isFolder) button.window.dropOnFolderIcon = Math.max(0, button.window.dropOnFolderIcon - 1)
+      button.window.dropLeave()
+      if (!d.hasUrls || !button.acceptsFiles) { d.accepted = false; return }
       d.accept(Qt.CopyAction)
       button.dock.dropFiles(button.item, button.isFolder, d.urls)
     }

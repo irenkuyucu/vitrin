@@ -10,6 +10,11 @@ real_dest=$(cd -- "$dest" && pwd -P)
 for src in "$@"; do
   [ -e "$src" ] || continue
   [ "$(cd -- "$(dirname -- "$src")" && pwd -P)" = "$real_dest" ] && continue
+  # A folder can't go into itself or one of its own subfolders.
+  if [ -d "$src" ]; then
+    real_src=$(cd -- "$src" && pwd -P)
+    case "$real_dest/" in "$real_src/"*) continue ;; esac
+  fi
   name=$(basename -- "$src"); base="$name"; ext=""
   if [ ! -d "$src" ] && [ "${name#?*.}" != "$name" ]; then base="${name%.*}"; ext=".${name##*.}"; fi
   target="$dest/$name"; n=2

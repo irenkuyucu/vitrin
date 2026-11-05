@@ -1604,7 +1604,7 @@ Item {
   Timer {
     interval: 15000
     repeat: true
-    running: !root.autoHide
+    running: !root.autoHide && root.dockAllowed
     onTriggered: {
       root.refreshFolders()
       root.refreshTrash()
@@ -2030,10 +2030,11 @@ Item {
 
   // ------------------------------------------------------------ Omarchy's own dock
   // Omarchy 4.5 and later have a dock of their own (the "omarchy.dock" plugin, shown on
-  // floating workspaces). It's one dock or the other: while Omarchy's is on, Vitrin shows
-  // nothing, on any workspace, and says once how to switch. Omarchy records a built-in
-  // plugin that's turned off in shell.json's "disabledPlugins" (`omarchy plugin disable
-  // omarchy.dock`); without a shell.json of the user's, its defaults apply.
+  // floating workspaces, where the two would overlap). Only one should be on: whenever both
+  // are, Vitrin asks which to keep (see dockChoiceDialog) and turns the other one off, the
+  // way the Omarchy menu's Setup > Plugins does. Until then it shows nothing. Omarchy records
+  // a built-in plugin that's turned off in shell.json's "disabledPlugins"; without a
+  // shell.json of the user's, its defaults apply.
   // (The shell sets this on plugins too.)
   property string omarchyPath: Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy"
   property bool systemDockInstalled: false
@@ -2074,16 +2075,181 @@ Item {
     }
   }
 
-  property bool systemDockNoticeShown: false
-  onSystemDockOnChanged: Qt.callLater(root.noticeSystemDock)
-  onShellConfigKnownChanged: Qt.callLater(root.noticeSystemDock)
-  function noticeSystemDock() {
-    if (!root.systemDockKnown || !root.shellConfigKnown || !root.systemDockOn || root.systemDockNoticeShown) return
-    root.systemDockNoticeShown = true
-    console.info(root.pluginId + ": Omarchy's own dock is on, so Vitrin stays hidden. "
-      + "To use Vitrin, run: omarchy plugin disable omarchy.dock")
-    Util.execArgv(["notify-send", "--app-name=Vitrin", "Vitrin is off while Omarchy's dock is on",
-      "To use Vitrin instead, turn it off in the Omarchy menu: Setup > Plugins > Disable Plugin > Dock"])
+  // Which question to ask while both docks are on: "start" when Omarchy's dock was already
+  // on as Vitrin started (Vitrin was just enabled, or both were on at login), "turnedOn" when
+  // it was turned on while Vitrin ran. "" when there's nothing to ask.
+  property string dockChoice: ""
+  property bool systemDockSeenOff: false
+  property bool dockChoiceMade: false     // a button was pressed; the switch is on its way
+  onSystemDockOnChanged: root.checkDockChoice()
+  onSystemDockKnownChanged: root.checkDockChoice()
+  onShellConfigKnownChanged: root.checkDockChoice()
+  function checkDockChoice() {
+    if (!root.systemDockKnown || !root.shellConfigKnown) return
+    if (!root.systemDockOn) {
+      root.systemDockSeenOff = true
+      root.dockChoice = ""
+      root.dockChoiceMade = false
+    } else if (root.dockChoice === "") {
+      root.dockChoice = root.systemDockSeenOff ? "turnedOn" : "start"
+    }
+  }
+
+  // Keep Vitrin: turn Omarchy's dock off. Keep Omarchy's: turn Vitrin off (it unloads).
+  function chooseDock(vitrin) {
+    root.dockChoiceMade = true
+    Quickshell.execDetached(["omarchy-plugin-disable", vitrin ? "omarchy.dock" : root.pluginId])
+  }
+
+  PanelWindow {
+    id: dockChoiceDialog
+    readonly property bool starting: root.dockChoice === "start"
+    screen: {
+      var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+      var screens = Quickshell.screens
+      for (var i = 0; i < screens.length; i++) if (screens[i].name === name) return screens[i]
+      return screens.length > 0 ? screens[0] : null
+    }
+    visible: root.dockChoice !== "" && !root.dockChoiceMade
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: Qt.rgba(0, 0, 0, 0.25)
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: root.slug + "-choice"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    onVisibleChanged: if (visible) choiceCard.forceActiveFocus()
+
+    // No way around the question: clicks and scrolling outside it do nothing.
+    MouseArea {
+      anchors.fill: parent
+      acceptedButtons: Qt.AllButtons
+      onWheel: function(w) { w.accepted = true }
+    }
+
+    Rectangle {
+      id: choiceCard
+      anchors.centerIn: parent
+      focus: true
+      // Enter takes the default, the button on the right.
+      Keys.onReturnPressed: root.chooseDock(dockChoiceDialog.starting)
+      Keys.onEnterPressed: root.chooseDock(dockChoiceDialog.starting)
+      width: 540
+      height: choiceColumn.implicitHeight + 48
+      color: root.surface
+      border.color: root.hairline
+      border.width: 1
+      radius: root.menuRadius
+
+      layer.enabled: true
+      layer.effect: MultiEffect {
+        shadowEnabled: true
+        shadowColor: Qt.rgba(0, 0, 0, 0.4)
+        shadowBlur: 0.6
+        shadowVerticalOffset: 2
+      }
+
+      Column {
+        id: choiceColumn
+        x: 24
+        y: 24
+        width: parent.width - 48
+        spacing: 16
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: dockChoiceDialog.starting ? "Use Vitrin instead of Omarchy's dock?"
+                                          : "Use Omarchy's dock instead of Vitrin?"
+          color: Commons.Color.popups.text
+          font.family: root.uiFont
+          font.pixelSize: root.uiFontSize + 2
+          font.weight: Font.DemiBold
+          bottomPadding: 6
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: dockChoiceDialog.starting
+            ? "Omarchy's own dock is also on. It shows up on floating workspaces, where it would overlap Vitrin, so only one dock should be on at a time."
+            : "Omarchy's own dock was just turned on. It would overlap Vitrin on floating workspaces, so only one dock should be on at a time."
+          color: Commons.Color.popups.text
+          font.family: root.uiFont
+          font.pixelSize: root.uiFontSize
+          lineHeight: 1.15
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: "You can switch between the two any time in the Omarchy menu, under Setup \u2192 Plugins: disable the dock you're using, then enable the other."
+          color: Commons.Color.popups.text
+          opacity: 0.75
+          font.family: root.uiFont
+          font.pixelSize: root.uiFontSize
+          lineHeight: 1.15
+        }
+
+        // Buttons: the other dock on the left, the default (the latest choice) on the right.
+        Item {
+          width: parent.width
+          height: 32 + 6
+
+          Rectangle {
+            anchors.right: defaultButton.left
+            anchors.rightMargin: 10
+            anchors.bottom: parent.bottom
+            width: otherText.implicitWidth + 24
+            height: 32
+            radius: root.rowRadius
+            color: otherMouse.pressed ? Util.alpha(root.foreground, 0.16)
+                 : otherMouse.containsMouse ? root.rowHover
+                 : Util.alpha(root.foreground, 0.06)
+            Text {
+              id: otherText
+              anchors.centerIn: parent
+              text: dockChoiceDialog.starting ? "Keep Omarchy's Dock" : "Keep Vitrin"
+              color: Commons.Color.popups.text
+              font.family: root.uiFont
+              font.pixelSize: root.uiFontSize
+            }
+            MouseArea {
+              id: otherMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              onClicked: root.chooseDock(!dockChoiceDialog.starting)
+            }
+          }
+
+          Rectangle {
+            id: defaultButton
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: defaultText.implicitWidth + 32
+            height: 32
+            radius: root.rowRadius
+            color: defaultMouse.pressed ? Qt.darker(root.accent, 1.15)
+                 : defaultMouse.containsMouse ? Qt.lighter(root.accent, 1.08)
+                 : root.accent
+            Text {
+              id: defaultText
+              anchors.centerIn: parent
+              text: dockChoiceDialog.starting ? "Use Vitrin" : "Use Omarchy's Dock"
+              color: root.background
+              font.family: root.uiFont
+              font.pixelSize: root.uiFontSize
+              font.weight: Font.DemiBold
+            }
+            MouseArea {
+              id: defaultMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              onClicked: root.chooseDock(dockChoiceDialog.starting)
+            }
+          }
+        }
+      }
+    }
   }
 
   // ------------------------------------------------------------ one dock per screen

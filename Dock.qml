@@ -1769,22 +1769,33 @@ Item {
   }
 
   // New Window, then the actions the app lists in its desktop entry (New Private Window,
-  // New Incognito Window, ...), as GNOME's dock shows them. An app's own "New Window"
-  // action replaces the dock's (except for terminals, opened the Omarchy way).
+  // New Incognito Window, ...), as GNOME's dock shows them. The dock's New Window is only a
+  // fallback: an app action that opens a new window (named so, or running the app's own
+  // command, like foot's "New Terminal" or LibreOffice's "New Document") takes its place,
+  // under the app's own name.
   function appActionRows(item) {
     var actions = item.entry.actions || []
     var rows = []
     var ownNew = null
+    var appCommand = plainCommand(item.entry.execString)
     for (var i = 0; i < actions.length; i++) {
       var a = actions[i]
       if (!a || !a.name) continue
-      if (a.id === "new-window" || String(a.name).toLowerCase() === "new window") { ownNew = a; continue }
-      rows.push({ kind: "action", label: a.name, act: "desktop-action", actionId: a.id })
+      var row = { kind: "action", label: a.name, act: "desktop-action", actionId: a.id }
+      if (!ownNew && (a.id === "new-window" || String(a.name).toLowerCase() === "new window"
+                      || (appCommand !== "" && plainCommand(a.execString) === appCommand))) {
+        ownNew = row
+        continue
+      }
+      rows.push(row)
     }
-    var useOwn = ownNew && !isTerminal(item.key)
-    rows.unshift(useOwn ? { kind: "action", label: "New Window", act: "desktop-action", actionId: ownNew.id }
-                        : { kind: "action", label: "New Window", act: "new" })
+    rows.unshift(ownNew || { kind: "action", label: "New Window", act: "new" })
     return rows
+  }
+
+  // A desktop entry command without its field codes (%U, %f, ...), for comparing commands.
+  function plainCommand(exec) {
+    return String(exec || "").replace(/%[a-zA-Z]/g, "").replace(/\s+/g, " ").trim()
   }
 
   // One of the app's desktop entry actions, the Omarchy way (see scripts/launch.sh).

@@ -789,7 +789,7 @@ Item {
   // one width as files come and go.
   function slotSourceFor(item, isFolder) {
     if (isFolder && root.displayAsFor(item) === "stack") return root.iconSource("text-x-generic")
-    return isFolder ? root.iconSource(item.icon) : root.pickIcon(item.icons)
+    return isFolder ? root.iconSource(root.folderIconFor(item)) : root.pickIcon(item.icons)
   }
 
   // Every slot's sizing icon, apps then folders.
@@ -1083,8 +1083,20 @@ Item {
     return !!folder && folder.path === "trash:///"
   }
 
+  // A folder's icon. The Trash shows a full trash can while it has items: its "iconFull"
+  // from the config if it has one (for icons given as image files), else the theme's
+  // "-full" variant of its icon (user-trash -> user-trash-full), where the theme has one.
+  function folderIconFor(folder) {
+    var icon = String(folder.icon || "")
+    if (!isTrash(folder) || root.trashCount === 0) return icon
+    if (folder.iconFull) return String(folder.iconFull)
+    if (icon && icon.charAt(0) !== "/" && Quickshell.iconPath(icon + "-full", true)) return icon + "-full"
+    return icon
+  }
+
   Process {
     id: trashCounter
+    running: true                // once at startup, then see refreshTrash
     command: ["bash", "-c", "ls -A \"$HOME/.local/share/Trash/files\" 2>/dev/null | wc -l"]
     stdout: StdioCollector {
       onStreamFinished: root.trashCount = parseInt(text) || 0
@@ -1231,12 +1243,16 @@ Item {
     onTriggered: root.refreshFolders()
   }
 
-  // With hiding off the dock is always on screen, so keep its stack icons current.
+  // With hiding off the dock is always on screen (it never slides up, which is when the
+  // other refreshes happen), so keep its stack icons and the Trash's full/empty icon current.
   Timer {
     interval: 15000
     repeat: true
     running: !root.autoHide
-    onTriggered: root.refreshFolders()
+    onTriggered: {
+      root.refreshFolders()
+      root.refreshTrash()
+    }
   }
 
   onFoldersChanged: folderRefreshSoon.restart()

@@ -35,7 +35,7 @@ Item {
   readonly property bool beingDragged: !isFolder && slot !== -1 && window.dragFrom === slot
   readonly property string label: item.name || ""
   // Apps pick the first of their icon candidates that works (see "icon fallbacks").
-  readonly property string iconUrl: isFolder ? dock.iconSource(item.icon) : dock.pickIcon(item.icons)
+  readonly property string iconUrl: isFolder ? dock.iconSource(dock.folderIconFor(item)) : dock.pickIcon(item.icons)
   readonly property bool letterIcon: iconUrl === dock.letterIcon
   readonly property string slotUrl: dock.slotSourceFor(item, isFolder)
 

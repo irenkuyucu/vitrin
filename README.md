@@ -70,7 +70,9 @@ changes when the file is saved.
   },
   // Desktop entry IDs, in dock order (Files always comes first).
   "pins": ["org.gnome.Nautilus", "Alacritty", "chromium"],
-  // Folder shortcuts on the right. "icon" is an icon name or an image path.
+  // Folder shortcuts on the right. "icon" is an icon name or an image path. The Trash
+  // shows a full trash can while it has items: the theme's "-full" variant of its icon
+  // (user-trash-full), or "iconFull" when its icon is an image path.
   // openAs / displayAs: "stack" or "folder" (Trash is always a folder).
   "folders": [
     { "name": "Downloads", "icon": "folder-download", "path": "~/Downloads" },

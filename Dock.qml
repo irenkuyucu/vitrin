@@ -1815,7 +1815,9 @@ Item {
       // (instead of narrowing now and widening again on release).
       function dockWidthFor(size) {
         var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
-        if (root.hasMiddle) width += root.dividerWidthFor(size)     // before the middle section
+        // Before the middle section (not while its only app is being pulled out).
+        if (root.hasMiddle && !(win.dragRemoving && root.middle.length === 1 && win.dragFrom >= root.middleStart))
+          width += root.dividerWidthFor(size)
         for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
         if (win.dragRemoving) width -= root.slotWidthFor(root.iconSource(win.dragIcon), size)
         return width + root.leftPadFor(size) + root.rightPadFor(size)
@@ -2032,7 +2034,9 @@ Item {
         var scene = row.mapToItem(null, point.x, point.y)
         win.dragSceneX = scene.x
         win.dragSceneY = scene.y
-        updateDragTarget(point.x)
+        // Pulled out to remove: no longer being dragged in among the pinned apps.
+        if (win.dragRemoving) win.dragToPinned = false
+        else updateDragTarget(point.x)
         updateAutoScroll(point.x)
       }
 

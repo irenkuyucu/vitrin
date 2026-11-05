@@ -68,9 +68,17 @@ Item {
   // before it, at its left: it moves, appears and goes with the section that way.
   readonly property bool sectionStart: !isFolder && !isLeaving && slot !== -1
     && dock.hasMiddle && slot === dock.middleStart
-  readonly property real contentLeft: sectionStart ? dock.dividerWidthFor(window.size) * appear : 0
+  // Pulling out the middle section's only app takes the whole section with it: the divider
+  // closes up too, while it's held out (see Dock.qml's dockWidthFor).
+  readonly property bool sectionGoing: beingDragged && window.dragRemoving && dock.middle.length === 1
+  property real sectionGap: sectionStart && !sectionGoing ? dock.dividerWidthFor(window.size) : 0
+  Behavior on sectionGap {
+    enabled: button.window.dragFrom !== -1 && !button.window.snapShifts
+    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+  }
+  readonly property real contentLeft: sectionGap * appear
 
-  width: (fullWidth + (sectionStart ? dock.dividerWidthFor(window.size) : 0)) * appear
+  width: (fullWidth + sectionGap) * appear
   enabled: !isLeaving
   height: dock.slotHeightFor(window.size)
   opacity: edgeFade
@@ -107,7 +115,7 @@ Item {
   readonly property real artWidth: dock.artWidthFor(slotUrl, window.size)
 
   DockDivider {
-    visible: button.sectionStart
+    visible: button.sectionGap > 0.5
     dock: button.dock
     window: button.window
     width: button.contentLeft
@@ -115,7 +123,7 @@ Item {
     // When this app itself is being dragged in among the pinned apps, its icon is gone from
     // here but the divider must still move right with the pinned apps' new room.
     transform: Translate {
-      x: button.beingDragged && button.window.dragToPinned ? button.window.dragWidth : 0
+      x: button.beingDragged && button.window.dragToPinned && !button.window.dragRemoving ? button.window.dragWidth : 0
       Behavior on x {
         enabled: !button.window.snapShifts
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic }

@@ -8,11 +8,24 @@ Vitrin follows your Omarchy theme and runs inside the Quickshell session.
 
 ## Install
 
-Requires Omarchy 4 on Hyprland. Vitrin was developed on Omarchy 4.0.6 with Quickshell 0.3.2.
+Requires Omarchy 4 on Hyprland. Vitrin was developed on Omarchy 4.0.6 and 4.5 with
+Quickshell 0.3.2.
 
 ```bash
 omarchy plugin add https://github.com/irenkuyucu/vitrin.git --enable
 ```
+
+Omarchy 4.5 and later come with a dock of their own, shown on floating workspaces. Vitrin
+replaces it rather than running next to it: while Omarchy's dock is on, Vitrin stays hidden
+(and says so in a notification). To use Vitrin, turn Omarchy's dock off: open the Omarchy
+menu and choose Setup > Plugins > Disable Plugin > Dock, or run:
+
+```bash
+omarchy plugin disable omarchy.dock
+```
+
+Enabling it again (Setup > Plugins > Enable Plugin, or `omarchy plugin enable omarchy.dock`)
+brings it back, and Vitrin steps aside again.
 
 Plugins run inside the Omarchy shell with your permissions, so it's worth reading the code
 of any plugin before you enable it. To remove Vitrin:
@@ -85,6 +98,9 @@ hl.layer_rule({ match = { namespace = "^vitrin$" }, blur = true, ignore_alpha = 
 ```
 
 ## Troubleshooting
+
+**The dock doesn't show up.** If you're on Omarchy 4.5 or later, Omarchy's own dock is
+probably on; see [Install](#install).
 
 **An app shows the wrong icon or name.** Some apps' windows don't identify themselves the
 way their desktop entry expects. The shell log names the window's ID; add it to `aliases`

@@ -2028,9 +2028,67 @@ Item {
     }
   }
 
+  // ------------------------------------------------------------ Omarchy's own dock
+  // Omarchy 4.5 and later have a dock of their own (the "omarchy.dock" plugin, shown on
+  // floating workspaces). It's one dock or the other: while Omarchy's is on, Vitrin shows
+  // nothing, on any workspace, and says once how to switch. Omarchy records a built-in
+  // plugin that's turned off in shell.json's "disabledPlugins" (`omarchy plugin disable
+  // omarchy.dock`); without a shell.json of the user's, its defaults apply.
+  // (The shell sets this on plugins too.)
+  property string omarchyPath: Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy"
+  property bool systemDockInstalled: false
+  property bool systemDockKnown: false
+  property var shellDisabledPlugins: []
+  property bool shellConfigKnown: false
+  readonly property bool systemDockOn: root.systemDockInstalled
+    && root.shellDisabledPlugins.indexOf("omarchy.dock") === -1
+  // Shown only once both are known, so it never flashes up before stepping aside.
+  readonly property bool dockAllowed: root.systemDockKnown && root.shellConfigKnown && !root.systemDockOn
+
+  FileView {
+    path: root.omarchyPath + "/shell/plugins/dock/manifest.json"
+    onLoaded: { root.systemDockInstalled = true; root.systemDockKnown = true }
+    onLoadFailed: function(error) { root.systemDockInstalled = false; root.systemDockKnown = true }
+  }
+
+  FileView {
+    id: shellConfigFile
+    path: root.home + "/.config/omarchy/shell.json"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      var disabled = []
+      try {
+        var cfg = JSON.parse(text())
+        if (cfg && Array.isArray(cfg.disabledPlugins)) disabled = cfg.disabledPlugins.map(String)
+      } catch (e) {
+        // Caught mid-save: keep what we had; the finished file comes as another change.
+        if (root.shellConfigKnown) return
+      }
+      if (JSON.stringify(disabled) !== JSON.stringify(root.shellDisabledPlugins)) root.shellDisabledPlugins = disabled
+      root.shellConfigKnown = true
+    }
+    onLoadFailed: function(error) {
+      if (root.shellDisabledPlugins.length > 0) root.shellDisabledPlugins = []
+      root.shellConfigKnown = true
+    }
+  }
+
+  property bool systemDockNoticeShown: false
+  onSystemDockOnChanged: Qt.callLater(root.noticeSystemDock)
+  onShellConfigKnownChanged: Qt.callLater(root.noticeSystemDock)
+  function noticeSystemDock() {
+    if (!root.systemDockKnown || !root.shellConfigKnown || !root.systemDockOn || root.systemDockNoticeShown) return
+    root.systemDockNoticeShown = true
+    console.info(root.pluginId + ": Omarchy's own dock is on, so Vitrin stays hidden. "
+      + "To use Vitrin, run: omarchy plugin disable omarchy.dock")
+    Util.execArgv(["notify-send", "--app-name=Vitrin", "Vitrin is off while Omarchy's dock is on",
+      "To use Vitrin instead, turn it off in the Omarchy menu: Setup > Plugins > Disable Plugin > Dock"])
+  }
+
   // ------------------------------------------------------------ one dock per screen
   Variants {
-    model: Quickshell.screens
+    model: root.dockAllowed ? Quickshell.screens : []
 
     PanelWindow {
       id: win

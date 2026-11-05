@@ -79,8 +79,17 @@ Item {
   // while it runs shouldn't bring the dock up.
   readonly property var neverShowOver: ["org.omarchy.screensaver"]
 
-  // Files is the dock's Finder: always first, always pinned, can't be removed or moved.
-  readonly property string fixedApp: "org.gnome.Nautilus"
+  // The file manager is the dock's Finder: always first, always pinned, can't be removed or
+  // moved. It's the system's default one (the app that opens folders, see "places" below);
+  // Omarchy's, Files (Nautilus), until that's known.
+  property string fixedApp: "org.gnome.Nautilus"
+  readonly property string fileManagerName: {
+    var entry = DesktopEntries.byId(root.fixedApp)
+    return entry && entry.name ? String(entry.name) : "Files"
+  }
+  // File managers the dock may have pinned first before the default changed (see normalizePins).
+  readonly property var knownFileManagers: ["org.gnome.Nautilus", "thunar", "org.kde.dolphin", "nemo",
+    "pcmanfm", "pcmanfm-qt", "caja", "org.xfce.thunar"]
 
   function isFixed(key) {
     return key === root.fixedApp
@@ -100,9 +109,45 @@ Item {
 
   function defaultFolders() {
     return [
-      { name: "Downloads", icon: "folder-download", path: "~/Downloads" },
-      { name: "Trash", icon: "user-trash", path: "trash:///" }
+      { name: root.downloadsName, icon: "folder-download", path: root.downloadsPath },
+      { name: root.trashName, icon: "user-trash", path: "trash:///" }
     ]
+  }
+
+  // ------------------------------------------------------------ places
+  // The system's file manager, Downloads folder and the Trash's name (localized on many
+  // systems), from scripts/default-places.sh; the fallbacks are Omarchy's English defaults.
+  property string downloadsPath: "~/Downloads"
+  property string downloadsName: "Downloads"
+  property string trashName: "Trash"
+  property bool placesKnown: false
+
+  Process {
+    id: placesFinder
+    running: true
+    command: ["bash", root.script("default-places.sh")]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var lines = String(text).split("\n")
+        var fm = lines[0] || ""
+        if (fm && DesktopEntries.byId(fm) && fm !== root.fixedApp) root.fixedApp = fm
+        if (lines[1]) {
+          root.downloadsPath = lines[1].indexOf(root.home + "/") === 0 ? "~" + lines[1].slice(root.home.length) : lines[1]
+          root.downloadsName = lines[2] || lines[1].split("/").pop()
+        }
+        if (lines[3]) root.trashName = lines[3]
+        root.placesKnown = true
+        root.finishFirstRun(false)
+      }
+    }
+  }
+
+  onFixedAppChanged: {
+    var normalized = normalizePins(root.pins)
+    if (JSON.stringify(normalized) !== JSON.stringify(root.pins)) {
+      root.pins = normalized
+      if (root.configLoaded) saveConfig()
+    }
   }
 
   // ------------------------------------------------------------ terminal
@@ -159,12 +204,15 @@ Item {
   }
 
   // Pins saved under another id (an old "org.omarchy.terminal" pin, or an aliased app id)
-  // belong to the icon they're grouped under. Files always comes first.
+  // belong to the icon they're grouped under. The file manager always comes first; a
+  // different file manager in first place was the fixed one before the default changed,
+  // not a pin of the user's, so it goes.
   function normalizePins(list) {
     var out = []
     for (var i = 0; i < list.length; i++) {
       var p = list[i]
       if (typeof p !== "string" || p.length === 0) continue
+      if (i === 0 && p !== root.fixedApp && root.knownFileManagers.indexOf(p) !== -1) continue
       var key = root.effectiveAliases[p] || p
       if (out.indexOf(key) === -1) out.push(key)
     }
@@ -193,9 +241,9 @@ Item {
   }
 
   // ------------------------------------------------------------ first run
-  // A new dock starts with Files, the default terminal and the default browser (each only
-  // if installed), then Downloads and Trash. Both defaults are looked up asynchronously, so
-  // the config is written once both are known (or after firstRunTimeout).
+  // A new dock starts with the file manager, the default terminal and the default browser
+  // (each only if installed), then Downloads and Trash. The defaults are looked up
+  // asynchronously, so the config is written once all are known (or after firstRunTimeout).
   property bool firstRun: false
   property bool terminalKnown: false
   property string browserApp: ""
@@ -246,9 +294,10 @@ Item {
   }
 
   function finishFirstRun(force) {
-    if (!root.firstRun || (!force && !(root.terminalKnown && root.browserKnown))) return
+    if (!root.firstRun || (!force && !(root.terminalKnown && root.browserKnown && root.placesKnown))) return
     root.firstRun = false
     firstRunTimer.stop()
+    root.folders = defaultFolders()
     root.pins = normalizePins([root.fixedApp, root.terminalApp, root.browserApp].filter(function(id) {
       return !!id && !!DesktopEntries.byId(id)
     }))
@@ -322,7 +371,7 @@ Item {
         if (!folder || typeof folder.path !== "string" || folder.path.length === 0) continue
         if (typeof folder.name !== "string" || folder.name.length === 0) {
           // No name given: use the folder's own name.
-          folder = Object.assign({}, folder, { name: isTrash(folder) ? "Trash"
+          folder = Object.assign({}, folder, { name: isTrash(folder) ? root.trashName
             : expandPath(folder.path).replace(/\/+$/, "").split("/").pop() || folder.path })
         }
         folders.push(folder)
@@ -1271,8 +1320,9 @@ Item {
   // In case the shell stopped while warping was off.
   Component.onCompleted: Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
 
+  // In the file manager (a new window: Nautilus's entry asks for one, see scripts/launch.sh).
   function openFolder(folder) {
-    Util.execArgv(["uwsm-app", "--", "nautilus", "--new-window", expandPath(folder.path)])
+    Util.execArgv(["bash", root.script("launch.sh"), root.fixedApp, expandPath(folder.path)])
   }
 
   function quit(item) {
@@ -1722,8 +1772,10 @@ Item {
     Util.execArgv(["uwsm-app", "--", "gio", "open", path])
   }
 
+  // The file manager with the file selected: Nautilus's own option, else the standard
+  // FileManager1 D-Bus call most file managers answer, else the file's folder.
   function showInFiles(path) {
-    Util.execArgv(["uwsm-app", "--", "nautilus", "--select", path])
+    Util.execArgv(["bash", root.script("show-file.sh"), root.fixedApp, path])
   }
 
   // ------------------------------------------------------------ dropping files
@@ -1833,7 +1885,7 @@ Item {
       ]
       // Same order as the apps' menus: opening, then arranging, then the destructive one.
       if (isTrash(item)) return joinMenuGroups([
-        [{ kind: "action", label: "Open in Files", act: "open" }],
+        [{ kind: "action", label: "Open in " + root.fileManagerName, act: "open" }],
         [{ kind: "action", label: "Empty Trash…", act: "empty-ask", disabled: root.trashCount === 0 }]
       ])
       var arrange = [{ kind: "submenu", label: "Display as", page: "displayAs",
@@ -1843,7 +1895,7 @@ Item {
       if (at > 0) arrange.push({ kind: "action", label: "Move Left", act: "folder-left" })
       if (at !== -1 && at < lastMovable) arrange.push({ kind: "action", label: "Move Right", act: "folder-right" })
       arrange.push({ kind: "action", label: "Remove from Dock", act: "remove-folder" })
-      return joinMenuGroups([[{ kind: "action", label: "Open in Files", act: "open" }], arrange])
+      return joinMenuGroups([[{ kind: "action", label: "Open in " + root.fileManagerName, act: "open" }], arrange])
     }
 
     // Its windows; opening (New Window and the app's own actions); arranging; Quit.

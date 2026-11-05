@@ -30,8 +30,8 @@ omarchy plugin remove vitrin
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
   keep it.
 - **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
-  newest files in a stack, or middle-click it to open it in Files; the Trash always opens in
-  Files. To add a shortcut, drag a folder onto the dock between the folders. You can drag
+  newest files in a stack, or middle-click it to open it in your file manager (Files on
+  Omarchy); the Trash always opens there. To add a shortcut, drag a folder onto the dock between the folders. You can drag
   shortcuts to reorder them, or up and out of the dock to remove them. Right-click a folder
   for its options.
 - **Dividers**: Right-click a divider to turn hiding on or off, or to open Dock Settings.

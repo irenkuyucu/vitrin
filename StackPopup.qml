@@ -8,7 +8,7 @@ import qs.Commons as Commons
 // A folder opened as a stack: its files, newest first, in a grid above the folder's dock
 // icon (up to dock.stackMax of them). The grid shows at most 3 rows (fewer on short
 // screens) and scrolls for the rest, creating tiles (and loading thumbnails) only for
-// the ones in view. Click a file to open it; right-click for Open / Show in Files.
+// the ones in view. Click a file to open it; right-click for Open / Show in <file manager>.
 // Clicking anywhere outside closes it, like the dock's menus. Files can be dragged out of
 // it to other apps (a browser upload, Files, a chat), which closes it once dropped.
 PopupWindow {
@@ -295,7 +295,7 @@ PopupWindow {
           Text {
             id: openText
             anchors.centerIn: parent
-            text: "Open in Files"
+            text: "Open in " + stack.dock.fileManagerName
             color: Commons.Color.popups.text
             font.family: stack.dock.uiFont
             font.pixelSize: stack.dock.uiFontSize
@@ -336,7 +336,7 @@ PopupWindow {
         Repeater {
           model: [
             { label: "Open", act: "open" },
-            { label: "Show in Files", act: "reveal" }
+            { label: "Show in " + stack.dock.fileManagerName, act: "reveal" }
           ]
           delegate: Rectangle {
             required property var modelData

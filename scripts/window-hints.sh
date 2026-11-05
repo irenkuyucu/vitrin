@@ -4,7 +4,9 @@
 #
 # Prints three lines for the first window with that app id (empty when unknown):
 #   1. the desktop entry it was launched from: $GIO_LAUNCHED_DESKTOP_FILE (gio, gtk-launch)
-#      or the systemd unit uwsm-app puts apps in ("app-Hyprland-<entry id>@<random>.service")
+#      or the systemd unit uwsm-app puts apps in ("app-Hyprland-<entry id>@<random>.service"
+#      or "app-Hyprland-<entry id>-<random>.scope"; a unit named after a launcher rather
+#      than an entry, like gtk-launch, matches no entry and is ignored by the dock)
 #   2. the path of its executable
 #   3. its command line's first word (the script or binary that was run)
 set -u
@@ -23,7 +25,7 @@ launched=${launched%.desktop}
 if [ -z "$launched" ]; then
   # systemd escapes "-" as "\x2d" in unit names.
   unit=$(sed -n 's|.*/||p' "/proc/$pid/cgroup" 2>/dev/null | head -n 1 | sed 's/\\x2d/-/g')
-  if [[ $unit =~ ^app-[^-]+-(.+)@[^@]*\.service$ ]]; then
+  if [[ $unit =~ ^app-[^-]+-(.+)@[^@]*\.service$ ]] || [[ $unit =~ ^app-[^-]+-(.+)-[0-9a-f]+\.scope$ ]]; then
     launched=${BASH_REMATCH[1]}
     launched=${launched%.desktop}
   fi

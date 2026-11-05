@@ -28,10 +28,14 @@ shell, so it adds no extra background process.
   get their proper icons and are grouped correctly, whichever terminal you use.
 - **Even spacing**: icon themes pad their artwork unevenly, so Vitrin measures each icon
   and spaces them by what you actually see: every gap between icons looks the same.
-- **Resize from the divider**: drag the divider up or down to resize the dock, as on macOS
+- **Recent apps**: like macOS, apps that aren't pinned get their own section between two
+  dividers: running ones, plus the last 3 you quit. Apps keep their place there; past 3
+  quit apps, the one quit longest ago drops out. Drag one in among the pinned apps (or
+  choose Keep in Dock) to pin it. Can be turned off in the settings.
+- **Resize from a divider**: drag either divider up or down to resize the dock, as on macOS
   (can be turned off in the settings).
-- **Settings**: right-click the divider for Turn Hiding On/Off and a settings dialog (size,
-  divider resizing, auto-hide, hide delay, launch animation).
+- **Settings**: right-click a divider for Turn Hiding On/Off and a settings dialog (size,
+  divider resizing, recent apps, auto-hide, hide delay, launch animation).
 
 ## Requirements
 
@@ -66,7 +70,8 @@ changes when the file is saved.
     "autoHide": true,
     "hideDelay": 500,       // milliseconds, 0-2000
     "animateLaunch": true,
-    "dividerResize": true   // drag the divider to resize
+    "dividerResize": true,  // drag a divider to resize
+    "showRecent": true      // the section with running and recent apps
   },
   // Desktop entry IDs, in dock order (Files always comes first).
   "pins": ["org.gnome.Nautilus", "Alacritty", "chromium"],
@@ -78,6 +83,8 @@ changes when the file is saved.
     { "name": "Downloads", "icon": "folder-download", "path": "~/Downloads" },
     { "name": "Trash", "icon": "user-trash", "path": "trash:///" }
   ],
+  // The running/recent apps section, in order (kept up to date by Vitrin).
+  "recent": [{ "key": "mpv", "quitAt": 1793830000000 }],
   // Put one app's windows under another app's icon:
   // { "<window app id>": "<desktop entry id>" }. Rarely needed; Vitrin also adds
   // entries here itself when it works out which app an unrecognized window belongs to.

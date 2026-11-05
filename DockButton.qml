@@ -54,16 +54,26 @@ Item {
     if (window.dragRemoving) return (isFolder || slot > from) ? -window.dragWidth : 0
     if (isFolder) return 0
     var to = window.dragTo
+    // A middle-section app dragged in among the pinned apps: everything from its landing
+    // spot up to where it came from moves right to make room (the divider too, see below).
+    if (window.dragToPinned) return slot >= to && slot < from ? window.dragWidth : 0
     if (to > from && slot > from && slot <= to) return -window.dragWidth
     if (to < from && slot >= to && slot < from) return window.dragWidth
     return 0
   }
 
   readonly property real fullWidth: dock.slotWidthFor(slotUrl, window.size)
-  width: fullWidth * appear
+
+  // The first app of the middle section (see "sections" in Dock.qml) carries the divider
+  // before it, at its left: it moves, appears and goes with the section that way.
+  readonly property bool sectionStart: !isFolder && !isLeaving && slot !== -1
+    && dock.hasMiddle && slot === dock.middleStart
+  readonly property real contentLeft: sectionStart ? dock.dividerWidthFor(window.size) * appear : 0
+
+  width: (fullWidth + (sectionStart ? dock.dividerWidthFor(window.size) : 0)) * appear
   enabled: !isLeaving
   height: dock.slotHeightFor(window.size)
-  opacity: beingDragged ? 0 : edgeFade
+  opacity: edgeFade
 
   // When the dock scrolls (too many icons for the screen), icons fade out as they near an
   // edge that has more icons beyond it: fully faded at the edge, over one icon's width.
@@ -96,6 +106,23 @@ Item {
   // gaps stay even and nothing shifts when a wider file (a landscape photo) arrives.
   readonly property real artWidth: dock.artWidthFor(slotUrl, window.size)
 
+  DockDivider {
+    visible: button.sectionStart
+    dock: button.dock
+    window: button.window
+    width: button.contentLeft
+    anchors.verticalCenter: parent.verticalCenter
+    // When this app itself is being dragged in among the pinned apps, its icon is gone from
+    // here but the divider must still move right with the pinned apps' new room.
+    transform: Translate {
+      x: button.beingDragged && button.window.dragToPinned ? button.window.dragWidth : 0
+      Behavior on x {
+        enabled: !button.window.snapShifts
+        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+      }
+    }
+  }
+
   // Like the macOS dock: no hover highlight (the name label shows instead),
   // and the icon dims briefly while pressed.
   Item {
@@ -106,6 +133,7 @@ Item {
     x: (dock.iconExtents[button.slotUrl]
       ? dock.gapLeftFor(window.size) - dock.artLeftFor(button.slotUrl, window.size)
       : Math.round((button.fullWidth - width) / 2)) - (1 - button.appear) * button.fullWidth / 2
+      + button.contentLeft
     scale: button.appear
     anchors.verticalCenter: parent.verticalCenter
     anchors.verticalCenterOffset: -1 + button.artOffsetY
@@ -115,7 +143,9 @@ Item {
     // stack), and the same way while files are dragged over an icon that can take them,
     // like the macOS dock. (No box around it: slots differ in width, so a box would be
     // uneven or reach over the neighbours.)
-    opacity: (mouse.pressed && !mouse.dragging && !mouse.suppressClick) || drop.containsDrag ? 0.6 : 1
+    // (Hidden while it's being dragged: the dragged copy follows the pointer instead.)
+    opacity: button.beingDragged ? 0
+      : (mouse.pressed && !mouse.dragging && !mouse.suppressClick) || drop.containsDrag ? 0.6 : 1
     Behavior on opacity { NumberAnimation { duration: 80 } }
 
     transform: Translate { id: bounce; y: 0 }
@@ -171,11 +201,12 @@ Item {
   // Running indicator: a small dot under every open app, scaled with the icon size
   // (4 px at 60 px icons, like macOS; never smaller than 3 px).
   Rectangle {
-    visible: button.running
+    visible: button.running && !button.beingDragged
     width: Math.max(3, Math.round(window.size / 15))
     height: width
     radius: width / 2
     anchors.horizontalCenter: parent.horizontalCenter
+    anchors.horizontalCenterOffset: button.contentLeft / 2    // under the icon, not the divider
     anchors.bottom: parent.bottom
     anchors.bottomMargin: 0
     color: Util.alpha(dock.foreground, 0.8)
@@ -184,6 +215,7 @@ Item {
   MouseArea {
     id: mouse
     anchors.fill: parent
+    anchors.leftMargin: button.contentLeft      // the divider part has its own (DockDivider)
     hoverEnabled: true
     preventStealing: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
@@ -255,6 +287,7 @@ Item {
   DropArea {
     id: drop
     anchors.fill: parent
+    anchors.leftMargin: button.contentLeft
     enabled: button.acceptsFiles
     keys: ["text/uri-list"]
     onEntered: function(d) {

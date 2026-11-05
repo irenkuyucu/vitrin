@@ -36,13 +36,15 @@ Item {
     autoHide: true,        // hide off-screen until the pointer hits the bottom edge
     hideDelay: 500,        // ms after the pointer leaves before hiding, 0-2000
     animateLaunch: true,   // bounce icons while their app opens
-    dividerResize: true    // drag the divider up/down to resize the dock (like macOS)
+    dividerResize: true,   // drag a divider up/down to resize the dock (like macOS)
+    showRecent: true       // a middle section with running and recently used apps (like macOS)
   })
   property int iconSize: settingDefaults.iconSize
   property bool autoHide: settingDefaults.autoHide
   property int hideDelay: settingDefaults.hideDelay
   property bool animateLaunch: settingDefaults.animateLaunch
   property bool dividerResize: settingDefaults.dividerResize
+  property bool showRecent: settingDefaults.showRecent
 
   // Look and feel. Shapes follow the GNOME/Adwaita conventions the Files app uses
   // (rounded surfaces, hairline borders, soft shadows); colors follow the Omarchy theme.
@@ -172,10 +174,8 @@ Item {
   onTerminalAppChanged: {
     var normalized = normalizePins(root.pins)
     if (JSON.stringify(normalized) !== JSON.stringify(root.pins)) {
-      // The renamed icon may already be on screen (as a running app); save the order as
-      // shown so the saved pin order and the visible order don't drift apart.
       root.pins = normalized
-      savePinsFromLayout(root.pins)
+      saveConfig()
     }
   }
 
@@ -238,6 +238,8 @@ Item {
     applySettings(root.settingDefaults)
     root.folders = defaultFolders()
     root.aliases = ({})
+    root.middle = []
+    root.recentQuitAt = ({})
     root.firstRun = true
     browserFinder.running = true
     firstRunTimer.start()
@@ -250,8 +252,13 @@ Item {
     root.pins = normalizePins([root.fixedApp, root.terminalApp, root.browserApp].filter(function(id) {
       return !!id && !!DesktopEntries.byId(id)
     }))
+    root.configLoaded = true
     saveConfig()
   }
+
+  // Set once the config file has been read (or set up on first run): until then, nothing
+  // that would save it (like the middle section changing as apps start) may write it.
+  property bool configLoaded: false
 
   // Set when the config file can't be parsed: saving is paused (so a hand edit with a
   // typo isn't overwritten) until the file is fixed, after a backup copy is made.
@@ -331,7 +338,24 @@ Item {
       assignIfChanged("pins", normalized)
     }
 
+    // The middle section, in order: [{ key, quitAt }] (quitAt null while the app ran).
+    if (Array.isArray(cfg.recent)) {
+      var middle = [], quitAt = {}
+      for (var r = 0; r < cfg.recent.length; r++) {
+        var entry = cfg.recent[r]
+        if (!entry || typeof entry.key !== "string" || middle.indexOf(entry.key) !== -1) continue
+        middle.push(entry.key)
+        if (typeof entry.quitAt === "number") quitAt[entry.key] = entry.quitAt
+      }
+      assignIfChanged("middle", middle)
+      assignIfChanged("recentQuitAt", quitAt)
+    }
+
     if (!applySettings(cfg.settings)) needsSave = true
+    root.configLoaded = true
+    // (Deferred: the file can be read while the dock is still being set up, and laying it
+    // out right then re-enters the window grouping that's being worked out.)
+    Qt.callLater(syncLayout)
     // Write back normalized pins and any settings added in newer versions.
     if (needsSave) saveConfig()
   }
@@ -357,6 +381,7 @@ Item {
     root.autoHide = bool("autoHide")
     root.animateLaunch = bool("animateLaunch")
     root.dividerResize = bool("dividerResize")
+    root.showRecent = bool("showRecent")
     // Settings this version doesn't know (left from older versions) are dropped on save.
     for (var key in s) if (root.settingDefaults[key] === undefined) ok = false
     return ok
@@ -368,7 +393,8 @@ Item {
       autoHide: root.autoHide,
       hideDelay: root.hideDelay,
       animateLaunch: root.animateLaunch,
-      dividerResize: root.dividerResize
+      dividerResize: root.dividerResize,
+      showRecent: root.showRecent
     }
   }
 
@@ -390,6 +416,9 @@ Item {
       settings: currentSettings(),
       pins: root.pins,
       folders: root.folders,
+      recent: root.middle.map(function(k) {
+        return { key: k, quitAt: root.recentQuitAt[k] !== undefined ? root.recentQuitAt[k] : null }
+      }),
       aliases: root.aliases
     }, null, 2) + "\n")
   }
@@ -452,7 +481,9 @@ Item {
     if (!h) return null
     var programs = [baseName(h.exe), dirName(h.exe), baseName(h.cmd)]
       .filter(function(n) { return !!n }).map(function(n) { return n.toLowerCase() })
-    var windowWords = wordsOf(appId).concat(wordsOf(programs.join(" ")))
+    // (The program's whole path counts: LibreOffice's windows can be "soffice", running
+    // /usr/lib/libreoffice/program/soffice.bin, launched from libreoffice-impress.)
+    var windowWords = wordsOf(appId).concat(wordsOf(programs.join(" ")), wordsOf(h.exe))
     if (h.launched) {
       var launched = DesktopEntries.byId(h.launched)
       if (launched) {
@@ -833,7 +864,12 @@ Item {
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
       if (!t || !t.appId) continue
-      var key = keyFor(t.appId)
+      // A dialog or helper window (one with a parent window) belongs to its top-most
+      // parent's app, never shown as an app of its own: e.g. an app's template chooser
+      // or file picker that opens under a generic window id.
+      var owner = t
+      for (var depth = 0; owner.parent && depth < 8; depth++) owner = owner.parent
+      var key = keyFor(owner.appId || t.appId)
       if (!byKey[key]) {
         byKey[key] = []
         order.push(key)
@@ -845,8 +881,12 @@ Item {
 
   onGroupsChanged: {
     syncLayout()
-    noteUnmatched()
-    learnFromLaunch()
+    // (Just after this update, not during it: both can change what the window grouping
+    // depends on, which mid-update would make it re-run itself.)
+    Qt.callLater(function() {
+      noteUnmatched()
+      learnFromLaunch()
+    })
     settleLaunching()
   }
 
@@ -860,7 +900,7 @@ Item {
     var open = {}
     for (var i = 0; i < toplevels.length; i++) {
       var appId = toplevels[i] && toplevels[i].appId
-      if (!appId) continue
+      if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
       var target = root.effectiveAliases[appId] || appId
       open[target] = true
       if (certainEntryFor(target)) continue
@@ -900,36 +940,64 @@ Item {
     saveConfig()
   }
   onPinsChanged: syncLayout()
+  onShowRecentChanged: Qt.callLater(syncLayout)
+
+  // ------------------------------------------------------------ sections
+  // The dock's apps come in two sections, like macOS with "Show suggested and recent apps":
+  // the pinned apps (Files first, then the pins in their saved order), then a divider and
+  // the middle section: apps that aren't pinned but are running, or were used recently.
+  // The middle section keeps its order: an app that opens joins at the right end; one that
+  // quits stays where it is (it just loses its dot) and is remembered as quit at that
+  // moment; running it again brings its dot back in place. At most recentMax quit apps stay
+  // (running ones don't count): beyond that, the one quit longest ago drops out, from
+  // wherever it is. With "showRecent" off there is no divider and quit apps go at once.
+  // The middle section is saved under "recent" in the config file.
+  readonly property int recentMax: 3
+  property var middle: []                // the middle section's keys, in order
+  property var recentQuitAt: ({})        // key -> when it quit (ms), for quit apps in it
+  readonly property int middleStart: root.layout.length - root.middle.length
+  readonly property bool hasMiddle: root.showRecent && root.middle.length > 0
+
+  function inMiddle(key) { return root.middle.indexOf(key) !== -1 }
+  function isRecent(key) { return inMiddle(key) && !root.groups.byKey[key] }
 
   function syncLayout() {
     var running = root.groups.byKey
-    var next = []
-    // Keep existing entries that are still pinned or running, in their current order.
-    for (var i = 0; i < root.layout.length; i++) {
-      var key = root.layout[i]
-      if (next.indexOf(key) === -1 && (root.pins.indexOf(key) !== -1 || running[key])) next.push(key)
-    }
-    // Pins not shown yet (startup, or the file was edited): place after the previous pin.
-    for (var p = 0; p < root.pins.length; p++) {
-      var pin = root.pins[p]
-      if (next.indexOf(pin) !== -1) continue
-      var at = 0
-      for (var q = p - 1; q >= 0; q--) {
-        var prev = next.indexOf(root.pins[q])
-        if (prev !== -1) {
-          at = prev + 1
-          break
-        }
+    var now = Date.now()
+    var pinned = [root.fixedApp].concat(root.pins.filter(function(k) { return k !== root.fixedApp }))
+    var quitAt = Object.assign({}, root.recentQuitAt)
+    var middle = []
+    for (var i = 0; i < root.middle.length; i++) {
+      var key = root.middle[i]
+      if (pinned.indexOf(key) !== -1 || middle.indexOf(key) !== -1) continue
+      if (running[key]) {
+        delete quitAt[key]
+      } else {
+        if (!root.showRecent) continue
+        if (quitAt[key] === undefined) quitAt[key] = now
       }
-      next.splice(at, 0, pin)
+      middle.push(key)
     }
-    // Newly opened apps go at the end.
+    // Newly opened apps join at the right end.
     for (var r = 0; r < root.groups.order.length; r++) {
-      if (next.indexOf(root.groups.order[r]) === -1) next.push(root.groups.order[r])
+      var opened = root.groups.order[r]
+      if (pinned.indexOf(opened) === -1 && middle.indexOf(opened) === -1) middle.push(opened)
     }
-    // Files is always first.
-    next = [root.fixedApp].concat(next.filter(function(k) { return k !== root.fixedApp }))
+    // Over the limit: drop the apps quit longest ago.
+    var quit = middle.filter(function(k) { return !running[k] })
+    quit.sort(function(a, b) { return quitAt[a] - quitAt[b] })
+    while (quit.length > root.recentMax) middle.splice(middle.indexOf(quit.shift()), 1)
+    for (var k in quitAt) if (middle.indexOf(k) === -1 || running[k]) delete quitAt[k]
+
+    var changed = JSON.stringify(middle) !== JSON.stringify(root.middle)
+      || JSON.stringify(quitAt) !== JSON.stringify(root.recentQuitAt)
+    if (changed) {
+      root.middle = middle
+      root.recentQuitAt = quitAt
+    }
+    var next = pinned.concat(middle)
     if (JSON.stringify(next) !== JSON.stringify(root.layout)) root.layout = next
+    if (changed && root.configLoaded) saveConfig()
   }
 
   // ------------------------------------------------------------ icons on screen
@@ -1460,39 +1528,46 @@ Item {
     Quickshell.execDetached(["bash", "-l", root.script("launch.sh"), String(item.entry.id)].concat(targets))
   }
 
-  // Saved pin order always follows the on-screen order.
-  function savePinsFromLayout(pinnedKeys) {
-    root.pins = root.layout.filter(function(k) { return pinnedKeys.indexOf(k) !== -1 })
+  // Keep in Dock: the app joins the pinned apps, at their end (or at `index` when dragged
+  // there from the middle section).
+  function pin(key, index) {
+    if (root.pins.indexOf(key) !== -1) return
+    var pins = root.pins.slice()
+    pins.splice(index === undefined ? pins.length : Math.max(1, Math.min(pins.length, index)), 0, key)
+    root.pins = pins
     saveConfig()
   }
 
-  // Keep in Dock: the icon stays exactly where it is.
-  function pin(key) {
-    if (root.pins.indexOf(key) !== -1) return
-    savePinsFromLayout(root.pins.concat([key]))
-  }
-
+  // Remove from Dock. A pinned app that's running moves to the middle section's end.
   function unpin(key) {
     if (isFixed(key)) return
     root.pins = root.pins.filter(function(p) { return p !== key })
     saveConfig()
   }
 
-  // Nothing moves Files, and nothing moves in front of it (position 0).
-  function move(key, delta) {
-    var list = root.layout.slice()
-    var from = list.indexOf(key)
-    var to = from + delta
-    if (isFixed(key) || from === -1 || to < 1 || to >= list.length) return
-    list.splice(from, 1)
-    list.splice(to, 0, key)
-    root.layout = list
-    savePinsFromLayout(root.pins)
+  // Remove from Dock, for a recently used app in the middle section.
+  function forgetRecent(key) {
+    if (!isRecent(key)) return
+    root.middle = root.middle.filter(function(k) { return k !== key })
+    syncLayout()
+    saveConfig()
   }
 
-  // Drag to reorder: put the app at position `to` in the app row.
+  // Reorder the pinned apps (pins order = their order on screen). Nothing moves Files, and
+  // nothing moves in front of it (position 0); the middle section keeps its own order.
+  function move(key, delta) {
+    var from = root.pins.indexOf(key)
+    var to = from + delta
+    if (isFixed(key) || from === -1 || to < 1 || to >= root.pins.length) return
+    var pins = root.pins.slice()
+    pins.splice(from, 1)
+    pins.splice(to, 0, key)
+    root.pins = pins
+    saveConfig()
+  }
+
   function moveTo(key, to) {
-    var from = root.layout.indexOf(key)
+    var from = root.pins.indexOf(key)
     if (from === -1 || to === from) return
     move(key, to - from)
   }
@@ -1532,11 +1607,13 @@ Item {
     if (!isFixed(item.key)) {
       if (item.pinned) rows.push({ kind: "action", label: "Remove from Dock", act: "unpin" })
       else if (item.entry) rows.push({ kind: "action", label: "Keep in Dock", act: "pin" })
+      if (isRecent(item.key)) rows.push({ kind: "action", label: "Remove from Dock", act: "forget" })
 
-      // Position 0 belongs to Files, so the app right after it can't move left.
-      var index = root.layout.indexOf(item.key)
+      // Only pinned apps move (the middle section keeps its order). Position 0 belongs to
+      // Files, so the app right after it can't move left.
+      var index = root.pins.indexOf(item.key)
       if (index > 1) rows.push({ kind: "action", label: "Move Left", act: "left" })
-      if (index !== -1 && index < root.layout.length - 1) rows.push({ kind: "action", label: "Move Right", act: "right" })
+      if (index !== -1 && index < root.pins.length - 1) rows.push({ kind: "action", label: "Move Right", act: "right" })
     }
 
     if (item.windows.length > 0) {
@@ -1591,6 +1668,7 @@ Item {
       case "open": openFolder(item); break
       case "new": launch(item); break
       case "unpin": unpin(item.key); break
+      case "forget": forgetRecent(item.key); break
       case "pin": pin(item.key); break
       case "left": move(item.key, -1); break
       case "right": move(item.key, 1); break
@@ -1697,6 +1775,10 @@ Item {
       // Set for the moment a pulled-out icon is removed: everything is already where it
       // belongs, so the slide-aside offsets are dropped without animating.
       property bool snapShifts: false
+      // A middle-section app is being dragged in among the pinned apps (to pin it at dragTo).
+      // Its own flag, because dragTo alone can't tell "at the end of the pinned apps" from
+      // "back where it was" for the middle section's first app: both are the same position.
+      property bool dragToPinned: false
       readonly property Item dragRow: row
       // For icons fading at the edges of a scrolling dock (see DockButton's edgeFade).
       readonly property real scrollX: rowView.contentX
@@ -1733,6 +1815,7 @@ Item {
       // (instead of narrowing now and widening again on release).
       function dockWidthFor(size) {
         var width = root.folders.length > 0 ? root.dividerWidthFor(size) : 0
+        if (root.hasMiddle) width += root.dividerWidthFor(size)     // before the middle section
         for (var i = 0; i < root.dockSources.length; i++) width += root.slotWidthFor(root.dockSources[i], size)
         if (win.dragRemoving) width -= root.slotWidthFor(root.iconSource(win.dragIcon), size)
         return width + root.leftPadFor(size) + root.rightPadFor(size)
@@ -1843,6 +1926,9 @@ Item {
       }
 
       // ---------------------------------------------------------- folder stack
+      property bool dividerResizing: false    // a divider is being dragged to resize (DockDivider)
+      function restartHideTimer() { hideTimer.restart() }
+
       property bool stackOpen: false
       property bool stackDragging: false      // a file is being dragged out of the stack
       property Item stackTarget: null
@@ -1930,11 +2016,15 @@ Item {
         win.tipText = ""
         win.dragIcon = icon
         win.dragName = item ? item.name : ""
-        // Running apps (even pinned ones) only slide sideways; unpin those from their menu.
-        win.dragRemovable = !!item && item.pinned && !root.isFixed(item.key) && item.windows.length === 0
+        // Pinned apps that aren't running, and recently used ones in the middle section, can
+        // be pulled out to remove them. Running apps only slide sideways (unpin those from
+        // their menu).
+        win.dragRemovable = !!item && !root.isFixed(item.key) && item.windows.length === 0
+          && (item.pinned || root.isRecent(item.key))
         win.dragTopY = zone.y + dockBox.y
         win.dragFrom = index
         win.dragTo = index
+        win.dragToPinned = false
       }
 
       // `point` is in the app row's coordinates.
@@ -1975,24 +2065,48 @@ Item {
         }
       }
 
+      // Where a dragged app would land. Pinned apps move among the pinned apps; an app from
+      // the middle section can be dragged in among the pinned apps (pinning it there), and
+      // otherwise stays where it is: the middle section keeps its own order.
       function updateDragTarget(rowX) {
-        var point = { x: rowX }
         win.dragX = rowX
+        var from = win.dragFrom
+        var pinnedCount = root.middleStart
+        var fromMiddle = from >= pinnedCount
+        // Pinned positions it could land at: after Files, up to the end of the pinned apps.
+        var last = fromMiddle ? pinnedCount : pinnedCount - 1
         // Slots can differ in width, so try the dragged icon at each position among the
-        // others and pick the one whose middle is closest to the pointer.
-        var best = 0
+        // other pinned apps and pick the one whose middle is closest to the pointer.
+        var best = 1
         var bestDistance = Infinity
         var left = 0
         var k = 0
-        for (var i = 0; i <= root.items.length; i++) {
-          if (i === win.dragFrom) continue
-          var distance = Math.abs(point.x - (left + win.dragWidth / 2))
-          if (distance < bestDistance) { bestDistance = distance; best = k }
-          if (i < root.items.length) left += root.slotWidthFor(root.pickIcon(root.items[i].icons), win.size)
+        for (var i = 0; i < pinnedCount && k <= last; i++) {
+          if (i === from) continue
+          if (k >= 1) {
+            var distance = Math.abs(rowX - (left + win.dragWidth / 2))
+            if (distance < bestDistance) { bestDistance = distance; best = k }
+          }
+          left += root.slotWidthFor(root.pickIcon(root.items[i].icons), win.size)
           k++
         }
-        // Slot 0 is Files' permanent spot; dragged apps can land anywhere after it.
-        win.dragTo = Math.max(1, Math.min(root.items.length - 1, best))
+        if (k <= last && k >= 1) {
+          var end = Math.abs(rowX - (left + win.dragWidth / 2))
+          if (end < bestDistance) { bestDistance = end; best = k }
+        }
+        // From the middle section, staying where it is counts as one more spot: at its own
+        // place, past the divider. Whichever spot is closest to the pointer wins, so the
+        // zone that means "pin it last" reaches halfway to its own place, not just to the
+        // divider (which made it a narrow strip to hit).
+        if (fromMiddle) {
+          var ownLeft = root.hasMiddle ? root.dividerWidthFor(win.size) : 0
+          for (var j = 0; j < from; j++) ownLeft += root.slotWidthFor(root.pickIcon(root.items[j].icons), win.size)
+          var stay = Math.abs(rowX - (ownLeft + win.dragWidth / 2))
+          win.dragToPinned = bestDistance < stay
+          win.dragTo = win.dragToPinned ? Math.max(1, Math.min(last, best)) : from
+          return
+        }
+        win.dragTo = Math.max(1, Math.min(last, best))
       }
 
       function endDrag() {
@@ -2000,29 +2114,41 @@ Item {
         var from = win.dragFrom
         var to = win.dragTo
         var removing = win.dragRemoving
+        var toPinned = win.dragToPinned
         if (removing) poof.play(dragGhost.x, dragGhost.y, dragGhost.source, dragGhost.width)
         // Everything is already where it belongs (the gap opened or closed while dragging),
         // so the slide-aside offsets are dropped without animating, and a pulled-out icon
         // goes without its leaving animation.
         win.snapShifts = true
         Qt.callLater(function() { win.snapShifts = false })
+        win.dragToPinned = false
         win.dragFrom = -1
         win.dragTo = -1
         if (from !== -1 && from < root.items.length) {
           var key = root.items[from].key
-          if (removing) {
+          var fromMiddle = from >= root.middleStart
+          if (removing || (fromMiddle && toPinned)) {
+            // Already gone from its spot on screen (pulled out, or dragged into the pinned
+            // apps): no leaving animation.
             var instant = Object.assign({}, root.removeInstantly)
             instant[key] = true
             root.removeInstantly = instant
-            root.unpin(key)
           }
-          else if (to !== from) root.moveTo(key, to)
+          if (removing) {
+            if (root.isRecent(key)) root.forgetRecent(key)
+            else root.unpin(key)
+          } else if (fromMiddle) {
+            if (toPinned) root.pin(key, to)
+          } else if (to !== from) {
+            root.moveTo(key, to)
+          }
         }
         hideTimer.restart()
       }
 
       function cancelDrag() {
         win.autoScrollSpeed = 0
+        win.dragToPinned = false
         win.dragFrom = -1
         win.dragTo = -1
         hideTimer.restart()
@@ -2069,7 +2195,7 @@ Item {
         onTriggered: {
           if (!win.hidingNow || win.settingsOpen) return
           if (zoneHover.hovered || hotspot.containsMouse || win.menuOpen || win.stackOpen) return
-          if (win.dragFrom !== -1 || win.dropDepth > 0 || dividerMouse.resizing) return
+          if (win.dragFrom !== -1 || win.dropDepth > 0 || win.dividerResizing) return
           win.revealed = false
           win.tipText = ""
         }
@@ -2199,97 +2325,22 @@ Item {
               }
             }
 
-            // Divider between apps and folders, with breathing room like the macOS dock.
-            // Right-click it for Turn Hiding On/Off and Dock Settings….
-            Item {
+            // Divider between apps and folders (see DockDivider.qml).
+            DockDivider {
               id: divider
+              dock: root
+              window: win
               visible: root.folders.length > 0
               // Wide enough that the gap on each side of the line matches the gap between two
               // icons, like macOS (see dividerWidthFor).
               width: root.dividerWidthFor(win.size)
+              anchors.verticalCenter: parent.verticalCenter
               // Slides left with the folders while an app is being pulled out to remove.
               transform: Translate {
                 x: win.dragRemoving ? -win.dragWidth : 0
                 Behavior on x {
                   enabled: !win.snapShifts
                   NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-                }
-              }
-              height: root.slotHeightFor(win.size)
-              anchors.verticalCenter: parent.verticalCenter
-
-              Rectangle {
-                // The icon before it brings gapRight, the one after it gapLeft; the line
-                // sits so both sides come out the same.
-                x: Math.round(root.dividerSideFor(win.size) - root.gapRightFor(win.size))
-                anchors.verticalCenter: parent.verticalCenter
-                width: 1
-                height: Math.round(win.size * 1.03)      // macOS: a bit taller than the icons
-                radius: 0.5
-                color: Util.alpha(root.foreground, dividerMouse.containsMouse ? 0.45 : 0.22)
-              }
-
-              // Right-click: the dock menu. Left-drag up/down (when "dividerResize" is on):
-              // resize the dock live, in the Size slider's steps; saved on release.
-              MouseArea {
-                id: dividerMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                preventStealing: true
-                acceptedButtons: root.dividerResize ? (Qt.LeftButton | Qt.RightButton) : Qt.RightButton
-                cursorShape: root.dividerResize ? Qt.SizeVerCursor : Qt.ArrowCursor
-                property bool suppressClick: false
-                property bool resizing: false
-                onWheel: function(w) { w.accepted = false }   // scrolling is for the dock
-                property real startScreenY: 0
-                property real startSize: 0
-
-                // Pointer height on screen. The dock window grows and shrinks while resizing,
-                // so the pointer's position inside it isn't stable; on screen it is.
-                function screenY(m) {
-                  return mapToItem(null, m.x, m.y).y + (win.screen.height - win.height)
-                }
-
-                onPressed: function(m) {
-                  suppressClick = win.justClosedPopup()
-                  if (m.button === Qt.LeftButton && !suppressClick) {
-                    resizing = true
-                    startScreenY = screenY(m)
-                    startSize = win.size
-                    win.resizePreview = 0   // no preview until the pointer moves
-                  }
-                }
-                onPositionChanged: function(m) {
-                  if (!resizing) return
-                  // Up = bigger. One 4 px size step per 4 px dragged.
-                  // In the Size setting's steps of 4 (the dock may start at a fitted size in
-                  // between), and no bigger than what fits on this screen.
-                  // When no step fits (the dock is already shrunk below the smallest), it can't
-                  // be resized at all, so it stays put.
-                  var size = Math.round((startSize + (startScreenY - screenY(m))) / 4) * 4
-                  var largest = Math.floor(win.fitFor(72) / 4) * 4
-                  win.resizePreview = largest < 32 ? 0 : Math.max(32, Math.min(largest, size))
-                }
-                function finishResize() {
-                  if (!resizing) return
-                  resizing = false
-                  var size = win.resizePreview
-                  // Only an actual drag changes the setting (a click on a dock shrunk to fit
-                  // mustn't save the fitted size).
-                  if (size > 0 && size !== startSize && size !== root.iconSize) {
-                    win.applyingResize = true
-                    root.setSetting("iconSize", size, true)
-                    win.resizePreview = 0
-                    Qt.callLater(function() { win.applyingResize = false })
-                  } else {
-                    win.resizePreview = 0
-                  }
-                  hideTimer.restart()
-                }
-                onReleased: function(m) { finishResize() }
-                onCanceled: finishResize()
-                onClicked: function(m) {
-                  if (m.button === Qt.RightButton && !suppressClick) win.openDockMenu(divider)
                 }
               }
             }
@@ -2601,9 +2652,10 @@ Item {
         visible: win.menuOpen && win.menuTarget !== null
         color: "transparent"
         anchor.item: win.menuTarget
-        anchor.rect.x: 0
+        // Over the icon itself, not a divider drawn in front of it (see DockButton).
+        anchor.rect.x: win.menuTarget && win.menuTarget.contentLeft !== undefined ? win.menuTarget.contentLeft : 0
         anchor.rect.y: root.shadowPad - root.popupGap
-        anchor.rect.width: win.menuTarget ? win.menuTarget.width : 1
+        anchor.rect.width: win.menuTarget ? win.menuTarget.width - (win.menuTarget.contentLeft || 0) : 1
         anchor.rect.height: 1
         anchor.edges: Edges.Top
         anchor.gravity: Edges.Top
@@ -2932,6 +2984,30 @@ Item {
               }
             }
 
+            // Show recent apps (the middle section)
+            Item {
+              width: parent.width
+              height: Math.max(recentLabel.implicitHeight, recentSwitch.implicitHeight)
+              Text {
+                id: recentLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - recentSwitch.width - 12
+                wrapMode: Text.WordWrap
+                text: "Show recent apps in Dock"
+                color: Commons.Color.popups.text
+                font.family: root.uiFont
+                font.pixelSize: root.uiFontSize
+              }
+              DockSwitch {
+                id: recentSwitch
+                dock: root
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.showRecent
+                onToggled: function(on) { root.setSetting("showRecent", on, true) }
+              }
+            }
+
             Rectangle { width: parent.width; height: 1; color: root.hairline }
 
             // Automatically hide
@@ -3096,7 +3172,8 @@ Item {
         anchor.onAnchoring: {
           if (!win.tipTarget) return
           var pos = win.tipTarget.mapToItem(null, 0, 0)
-          tip.anchor.rect.x = Math.round(pos.x + win.tipTarget.width / 2 - tip.implicitWidth / 2)
+          var left = win.tipTarget.contentLeft || 0     // not over a divider in front of it
+          tip.anchor.rect.x = Math.round(pos.x + left + (win.tipTarget.width - left) / 2 - tip.implicitWidth / 2)
           tip.anchor.rect.y = Math.round(pos.y - tip.implicitHeight + root.shadowPad - root.popupGap)
         }
         implicitWidth: tipCard.width + root.shadowPad * 2

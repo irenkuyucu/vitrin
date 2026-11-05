@@ -2918,11 +2918,12 @@ Item {
             spacing: 14
 
             Text {
-              text: "Dock"
+              text: "Dock Settings"
               color: Commons.Color.popups.text
               font.family: root.uiFont
               font.pixelSize: root.uiFontSize + 2
               font.weight: Font.DemiBold
+              bottomPadding: 6     // 20 px to the first control, like the gaps around separators
             }
 
             // Size
@@ -2969,7 +2970,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - dividerSwitch.width - 12
                 wrapMode: Text.WordWrap
-                text: "Drag the divider to resize"
+                text: "Drag dividers to resize"
                 color: Commons.Color.popups.text
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
@@ -2984,31 +2985,12 @@ Item {
               }
             }
 
-            // Show recent apps (the middle section)
+            // Between groups: a little more room than between related controls.
             Item {
               width: parent.width
-              height: Math.max(recentLabel.implicitHeight, recentSwitch.implicitHeight)
-              Text {
-                id: recentLabel
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - recentSwitch.width - 12
-                wrapMode: Text.WordWrap
-                text: "Show recent apps in Dock"
-                color: Commons.Color.popups.text
-                font.family: root.uiFont
-                font.pixelSize: root.uiFontSize
-              }
-              DockSwitch {
-                id: recentSwitch
-                dock: root
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                checked: root.showRecent
-                onToggled: function(on) { root.setSetting("showRecent", on, true) }
-              }
+              height: 13
+              Rectangle { anchors.centerIn: parent; width: parent.width; height: 1; color: root.hairline }
             }
-
-            Rectangle { width: parent.width; height: 1; color: root.hairline }
 
             // Automatically hide
             Item {
@@ -3071,7 +3053,36 @@ Item {
               }
             }
 
-            Rectangle { width: parent.width; height: 1; color: root.hairline }
+            // Between groups: a little more room than between related controls.
+            Item {
+              width: parent.width
+              height: 13
+              Rectangle { anchors.centerIn: parent; width: parent.width; height: 1; color: root.hairline }
+            }
+
+            // Show recent apps (the middle section)
+            Item {
+              width: parent.width
+              height: Math.max(recentLabel.implicitHeight, recentSwitch.implicitHeight)
+              Text {
+                id: recentLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - recentSwitch.width - 12
+                wrapMode: Text.WordWrap
+                text: "Show recent apps in Dock"
+                color: Commons.Color.popups.text
+                font.family: root.uiFont
+                font.pixelSize: root.uiFontSize
+              }
+              DockSwitch {
+                id: recentSwitch
+                dock: root
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.showRecent
+                onToggled: function(on) { root.setSetting("showRecent", on, true) }
+              }
+            }
 
             // Bounce while opening
             Item {
@@ -3098,14 +3109,16 @@ Item {
             }
 
             // Footer buttons
+            // (6 px above the buttons: 20 px from the controls, like around separators.)
             Item {
               width: parent.width
-              height: 32
+              height: 32 + 6
 
               Rectangle {
                 anchors.left: parent.left
+                anchors.bottom: parent.bottom
                 width: resetText.implicitWidth + 24
-                height: parent.height
+                height: 32
                 radius: root.rowRadius
                 color: resetMouse.pressed ? Util.alpha(root.foreground, 0.16)
                      : resetMouse.containsMouse ? root.rowHover
@@ -3128,8 +3141,9 @@ Item {
 
               Rectangle {
                 anchors.right: parent.right
+                anchors.bottom: parent.bottom
                 width: doneText.implicitWidth + 32
-                height: parent.height
+                height: 32
                 radius: root.rowRadius
                 color: doneMouse.pressed ? Qt.darker(root.accent, 1.15)
                      : doneMouse.containsMouse ? Qt.lighter(root.accent, 1.08)

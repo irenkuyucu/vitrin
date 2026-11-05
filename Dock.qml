@@ -1068,6 +1068,13 @@ Item {
   function inMiddle(key) { return root.middle.indexOf(key) !== -1 }
   function isRecent(key) { return inMiddle(key) && !root.groups.byKey[key] }
 
+  property bool windowsSettled: false
+  Timer {
+    interval: 1500
+    running: true
+    onTriggered: { root.windowsSettled = true; root.syncLayout() }
+  }
+
   function syncLayout() {
     var running = root.groups.byKey
     var now = Date.now()
@@ -1090,11 +1097,13 @@ Item {
       var opened = root.groups.order[r]
       if (pinned.indexOf(opened) === -1 && middle.indexOf(opened) === -1) middle.push(opened)
     }
-    // Over the limit: drop the apps quit longest ago (not while some windows are left out,
-    // as their apps would look quit).
+    // Over the limit: drop the apps quit longest ago. Not before windows have settled: right
+    // after startup the open windows aren't all known yet, and windows left out for a moment
+    // (see sharedAppIds) would make their apps look quit too.
     var quit = middle.filter(function(k) { return !running[k] })
     quit.sort(function(a, b) { return quitAt[a] - quitAt[b] })
-    while (quit.length > root.recentMax && !root.groups.pending) middle.splice(middle.indexOf(quit.shift()), 1)
+    var settled = root.windowsSettled && !root.groups.pending
+    while (quit.length > root.recentMax && settled) middle.splice(middle.indexOf(quit.shift()), 1)
     for (var k in quitAt) if (middle.indexOf(k) === -1 || running[k]) delete quitAt[k]
 
     var changed = JSON.stringify(middle) !== JSON.stringify(root.middle)

@@ -877,11 +877,34 @@ Item {
 
   // Open windows grouped by app: { byKey: { key: [toplevel, ...] }, order: [key, ...] }.
   readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values,
-    root.effectiveAliases, root.windowHints)
+    root.effectiveAliases, root.windowHints, root.launcherOf)
 
-  function computeGroups(toplevels, _apps, _aliases, _hints) {
+  // Window ids that many apps share, so they say nothing about which app a window is: those of
+  // terminal apps added with Omarchy's TUI installer (omarchy-tui-install), e.g. Docker
+  // (lazydocker). Such windows go by the desktop entry each was launched from, found per
+  // window (see noteSharedWindows): left out until it's known (a moment), so they don't
+  // briefly show as an app of their own; without one, they go by their id as usual.
+  readonly property var sharedAppIds: ["TUI.tile", "TUI.float"]
+  property var launcherOf: ({})          // Hyprland window address -> entry id ("" if none)
+
+  function hyprAddressFor(toplevel) {
+    var hypr = Hyprland.toplevels.values
+    for (var i = 0; i < hypr.length; i++) if (hypr[i].wayland === toplevel) return String(hypr[i].address)
+    return ""
+  }
+
+  // The entry id a window under a shared id belongs to; null while not known yet, "" if none.
+  function sharedKeyFor(toplevel) {
+    var address = hyprAddressFor(toplevel)
+    var id = address ? root.launcherOf[address] : undefined
+    if (id === undefined) return null
+    return id && DesktopEntries.byId(id) ? id : ""
+  }
+
+  function computeGroups(toplevels, _apps, _aliases, _hints, _launchers) {
     var byKey = {}
     var order = []
+    var pending = false                  // some windows are left out for now (see sharedAppIds)
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
       if (!t || !t.appId) continue
@@ -890,14 +913,19 @@ Item {
       // or file picker that opens under a generic window id.
       var owner = t
       for (var depth = 0; owner.parent && depth < 8; depth++) owner = owner.parent
-      var key = keyFor(owner.appId || t.appId)
+      var key = ""
+      if (root.sharedAppIds.indexOf(owner.appId) !== -1) {
+        key = sharedKeyFor(owner)
+        if (key === null) { pending = true; continue }
+      }
+      key = key || keyFor(owner.appId || t.appId)
       if (!byKey[key]) {
         byKey[key] = []
         order.push(key)
       }
       byKey[key].push(t)
     }
-    return { byKey: byKey, order: order }
+    return { byKey: byKey, order: order, pending: pending }
   }
 
   onGroupsChanged: {
@@ -916,9 +944,63 @@ Item {
   // Clues are forgotten once all of an id's windows have closed, so the next window with
   // that id is looked at afresh (it may be a different program).
   property var firstSeen: ({})
+  // Asks scripts/window-hints.sh which entry each window under a shared id was launched
+  // from, one window at a time; forgets closed ones.
+  property var launcherQueue: []
+  Process {
+    id: launcherFinder
+    property string address: ""
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var map = Object.assign({}, root.launcherOf)
+        map[launcherFinder.address] = String(text).split("\n")[0] || ""
+        root.launcherOf = map
+      }
+    }
+    onRunningChanged: if (!running) Qt.callLater(root.nextLauncher)
+  }
+
+  function nextLauncher() {
+    if (launcherFinder.running) return
+    root.launcherQueue = root.launcherQueue.filter(function(a) { return root.launcherOf[a] === undefined })
+    if (root.launcherQueue.length === 0) return
+    launcherFinder.address = root.launcherQueue[0]
+    launcherFinder.command = ["bash", root.script("window-hints.sh"), "--address", launcherFinder.address]
+    launcherFinder.running = true
+  }
+
+  Timer {
+    id: sharedRetry                      // Hyprland can list a new window a moment later
+    interval: 250
+    onTriggered: root.noteSharedWindows(ToplevelManager.toplevels.values)
+  }
+
+  function noteSharedWindows(toplevels) {
+    var open = {}
+    var missing = false
+    for (var i = 0; i < toplevels.length; i++) {
+      var t = toplevels[i]
+      if (!t || root.sharedAppIds.indexOf(t.appId) === -1) continue
+      var address = hyprAddressFor(t)
+      if (!address) { missing = true; continue }
+      open[address] = true
+      if (root.launcherOf[address] === undefined && root.launcherQueue.indexOf(address) === -1)
+        root.launcherQueue = root.launcherQueue.concat([address])
+    }
+    if (missing) sharedRetry.restart()
+    var closed = Object.keys(root.launcherOf).filter(function(a) { return !open[a] })
+    if (closed.length > 0) {
+      var map = Object.assign({}, root.launcherOf)
+      for (var c = 0; c < closed.length; c++) delete map[closed[c]]
+      root.launcherOf = map
+    }
+    nextLauncher()
+  }
+
   function noteUnmatched() {
     var toplevels = ToplevelManager.toplevels.values
     var open = {}
+    noteSharedWindows(toplevels)
     for (var i = 0; i < toplevels.length; i++) {
       var appId = toplevels[i] && toplevels[i].appId
       if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
@@ -1004,10 +1086,11 @@ Item {
       var opened = root.groups.order[r]
       if (pinned.indexOf(opened) === -1 && middle.indexOf(opened) === -1) middle.push(opened)
     }
-    // Over the limit: drop the apps quit longest ago.
+    // Over the limit: drop the apps quit longest ago (not while some windows are left out,
+    // as their apps would look quit).
     var quit = middle.filter(function(k) { return !running[k] })
     quit.sort(function(a, b) { return quitAt[a] - quitAt[b] })
-    while (quit.length > root.recentMax) middle.splice(middle.indexOf(quit.shift()), 1)
+    while (quit.length > root.recentMax && !root.groups.pending) middle.splice(middle.indexOf(quit.shift()), 1)
     for (var k in quitAt) if (middle.indexOf(k) === -1 || running[k]) delete quitAt[k]
 
     var changed = JSON.stringify(middle) !== JSON.stringify(root.middle)

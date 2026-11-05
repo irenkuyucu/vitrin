@@ -1083,7 +1083,7 @@ Item {
   }
 
   // Click: launch if closed; focus if in the background; cycle if already focused.
-  function activate(item) {
+  function activate(item, screen) {
     var windows = item.windows
     if (windows.length === 0) {
       launch(item)
@@ -1093,8 +1093,66 @@ Item {
     for (var i = 0; i < windows.length; i++) {
       if (windows[i].activated) focused = i
     }
-    windows[focused === -1 ? 0 : (focused + 1) % windows.length].activate()
+    focusWindow(windows[focused === -1 ? 0 : (focused + 1) % windows.length], screen)
   }
+
+  // ------------------------------------------------------------ keeping the pointer
+  // Hyprland moves the pointer to the middle of a window it focuses (handy when switching
+  // with the keyboard). Switching from the dock with the mouse, the pointer stays where it
+  // was instead, like the macOS dock. Hyprland has no per-focus option for that, so its
+  // warping is switched off just around the switch (see scripts/no-warp.sh: the user's own
+  // values are saved first and put back right after, and at startup in case the shell
+  // stopped in between). A window on another screen keeps Hyprland's move (you're going
+  // there). Launching an app isn't affected.
+  property var warpRestoreTarget: null
+
+  Process {
+    id: warpSwitch
+    property var then: null
+    onExited: {
+      var next = warpSwitch.then
+      warpSwitch.then = null
+      if (next) next()
+    }
+  }
+
+  function focusWindow(toplevel, screen) {
+    var sameScreen = !screen || !toplevel.screens || toplevel.screens.length === 0
+    for (var i = 0; !sameScreen && i < toplevel.screens.length; i++) if (toplevel.screens[i] === screen) sameScreen = true
+    if (!sameScreen || warpSwitch.running) {
+      toplevel.activate()
+      return
+    }
+    warpSwitch.then = function() {
+      toplevel.activate()
+      root.warpRestoreTarget = toplevel
+      warpRestoreTimer.interval = 300
+      warpRestoreTimer.restart()
+    }
+    warpSwitch.command = ["bash", root.script("no-warp.sh"), "off"]
+    warpSwitch.running = true
+  }
+
+  // Back on shortly after the window is active (Hyprland has focused it by then), or after
+  // 300 ms at most.
+  Connections {
+    target: ToplevelManager
+    function onActiveToplevelChanged() {
+      if (root.warpRestoreTarget && ToplevelManager.activeToplevel === root.warpRestoreTarget) {
+        warpRestoreTimer.interval = 50
+        warpRestoreTimer.restart()
+      }
+    }
+  }
+  Timer {
+    id: warpRestoreTimer
+    onTriggered: {
+      root.warpRestoreTarget = null
+      Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
+    }
+  }
+  // In case the shell stopped while warping was off.
+  Component.onCompleted: Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
 
   function openFolder(folder) {
     Util.execArgv(["uwsm-app", "--", "nautilus", "--new-window", expandPath(folder.path)])
@@ -1657,9 +1715,9 @@ Item {
     ]
   }
 
-  function runRow(row, item) {
+  function runRow(row, item, screen) {
     if (row.kind === "window") {
-      row.toplevel.activate()
+      focusWindow(row.toplevel, screen)
       return
     }
     switch (row.act) {
@@ -1995,7 +2053,7 @@ Item {
         }
         var item = win.menuItem
         win.closeMenu()
-        if (row.act !== "cancel") root.runRow(row, item)
+        if (row.act !== "cancel") root.runRow(row, item, win.screen)
       }
 
       // Trash count arrives asynchronously; refresh the open Trash menu when it does.

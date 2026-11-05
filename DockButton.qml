@@ -283,7 +283,7 @@ Item {
       } else if (m.button === Qt.MiddleButton) {
         button.dock.launch(button.item)
       } else {
-        button.dock.activate(button.item)
+        button.dock.activate(button.item, button.window.screen)
       }
     }
   }

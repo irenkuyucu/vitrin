@@ -343,7 +343,8 @@ Item {
       var middle = [], quitAt = {}
       for (var r = 0; r < cfg.recent.length; r++) {
         var entry = cfg.recent[r]
-        if (!entry || typeof entry.key !== "string" || middle.indexOf(entry.key) !== -1) continue
+        if (!entry || typeof entry.key !== "string" || middle.indexOf(entry.key) !== -1
+            || root.hiddenAppIds.indexOf(entry.key) !== -1) continue
         middle.push(entry.key)
         if (typeof entry.quitAt === "number") quitAt[entry.key] = entry.quitAt
       }
@@ -879,6 +880,9 @@ Item {
   readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values,
     root.effectiveAliases, root.windowHints, root.launcherOf)
 
+  // Windows that aren't apps to the user, never shown in the dock: Omarchy's screensaver.
+  readonly property var hiddenAppIds: ["org.omarchy.screensaver"]
+
   // Window ids that many apps share, so they say nothing about which app a window is: those of
   // terminal apps added with Omarchy's TUI installer (omarchy-tui-install), e.g. Docker
   // (lazydocker). Such windows go by the desktop entry each was launched from, found per
@@ -907,7 +911,7 @@ Item {
     var pending = false                  // some windows are left out for now (see sharedAppIds)
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
-      if (!t || !t.appId) continue
+      if (!t || !t.appId || root.hiddenAppIds.indexOf(t.appId) !== -1) continue
       // A dialog or helper window (one with a parent window) belongs to its top-most
       // parent's app, never shown as an app of its own: e.g. an app's template chooser
       // or file picker that opens under a generic window id.

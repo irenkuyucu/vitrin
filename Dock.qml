@@ -428,7 +428,7 @@ Item {
   // steps are fallbacks for apps whose window id doesn't match their entry (and whose entry
   // has no StartupWMClass), e.g. LocalSend: window "org.localsend.localsend_app", entry
   // "localsend.desktop". In order:
-  //   1. exact id, Omarchy web apps, Quickshell's fuzzy lookup (certainEntryFor)
+  //   1. exact id, Omarchy web apps and terminal apps, Quickshell's fuzzy lookup (certainEntryFor)
   //   2. clues from the window's process (hintEntryFor, see scripts/window-hints.sh)
   //   3. the id's dotted parts (looseEntryFor)
   // Windows of apps launched from the dock are also remembered (see learnFromLaunch), and
@@ -439,7 +439,25 @@ Item {
   }
 
   function certainEntryFor(appId) {
-    return DesktopEntries.byId(appId) || webAppEntryFor(appId) || DesktopEntries.heuristicLookup(appId) || null
+    return DesktopEntries.byId(appId) || webAppEntryFor(appId) || terminalAppEntryFor(appId)
+      || DesktopEntries.heuristicLookup(appId) || null
+  }
+
+  // Apps that run in a terminal (btop, cliamp, Neovim, ...): Omarchy's shortcuts open them in
+  // a terminal window tagged "org.omarchy.<program>" (omarchy-launch-tui), the dock tags them
+  // "org.omarchy.<desktop id>" (see scripts/launch.sh). Such a window is the app's, not the
+  // terminal's, even though its process is the terminal.
+  function terminalAppEntryFor(appId) {
+    var m = String(appId).match(/^org\.omarchy\.(.+)$/)
+    if (!m) return null
+    var byId = DesktopEntries.byId(m[1])
+    if (byId && byId.runInTerminal) return byId
+    var program = m[1].toLowerCase()
+    var apps = DesktopEntries.applications.values
+    for (var a = 0; a < apps.length; a++) {
+      if (apps[a].runInTerminal && execNameOf(apps[a]) === program) return apps[a]
+    }
+    return null
   }
 
   // Words that say nothing about which app something is.

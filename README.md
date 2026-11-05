@@ -1,107 +1,82 @@
 # Vitrin
 
-A macOS-style dock for [Omarchy](https://omarchy.org), built as an Omarchy shell plugin.
+A macOS-style dock for [Omarchy](https://omarchy.org). Move your pointer to the bottom
+edge to reveal your pinned, running, and recent apps alongside Downloads and Trash folders.
+Vitrin follows your Omarchy theme and runs inside the Quickshell session.
 
-Vitrin sits at the bottom of the screen, slides up when the pointer touches the bottom
-edge, and follows your Omarchy theme. It's written in QML and runs inside the Omarchy
-shell, so it adds no extra background process.
-
-## Features
-
-- **Apps**: pinned apps and running apps in one row. Windows of the same app share one
-  icon; a dot marks running apps. Click to open, focus, or cycle through an app's windows;
-  middle-click for a new window.
-- **Files first**: Files (Nautilus) always sits in the first spot, like Finder.
-- **Right-click menus**: switch to any of an app's windows, New Window, Keep in Dock /
-  Remove from Dock, Move Left / Right, Quit.
-- **Drag and drop**: drag icons to reorder them; drag a pinned app out of the dock to remove
-  it. Drop files onto an app to open them with it, onto a folder to move them in, or onto
-  Trash to trash them.
-- **Folders as stacks**: Downloads shows its newest files as a pile, and clicking it shows
-  them in a grid. Each folder can open as a stack or a folder, and display as a stack or a
-  folder icon (right-click it).
-- **Trash**: open it, drop files on it, or empty it (with confirmation).
-- **Auto-hide**: hides until the pointer reaches the bottom edge, including over full-screen
-  apps. With hiding off, windows make room for it.
-- **Launch feedback**: an icon bounces while its app starts.
-- **Web apps and terminals**: Omarchy web apps (WhatsApp, YouTube, ...) and terminal windows
-  get their proper icons and are grouped correctly, whichever terminal you use.
-- **Even spacing**: icon themes pad their artwork unevenly, so Vitrin measures each icon
-  and spaces them by what you actually see: every gap between icons looks the same.
-- **Recent apps**: like macOS, apps that aren't pinned get their own section between two
-  dividers: running ones, plus the last 3 you quit. Apps keep their place there; past 3
-  quit apps, the one quit longest ago drops out. Drag one in among the pinned apps (or
-  choose Keep in Dock) to pin it. Can be turned off in the settings.
-- **Resize from a divider**: drag either divider up or down to resize the dock, as on macOS
-  (can be turned off in the settings).
-- **Settings**: right-click a divider for Turn Hiding On/Off and a settings dialog (size,
-  divider resizing, recent apps, auto-hide, hide delay, launch animation).
-
-## Requirements
-
-- Omarchy 4 (developed on 4.0.6, with Quickshell 0.3.2) running Hyprland.
-- Nautilus (Omarchy's file manager), plus `gio`, `file`, and standard GNU tools, which come
-  with Omarchy.
+<!-- Screenshot -->
 
 ## Install
+
+Requires Omarchy 4 on Hyprland. Vitrin was developed on Omarchy 4.0.6 with Quickshell 0.3.2.
 
 ```bash
 omarchy plugin add https://github.com/irenkuyucu/vitrin.git --enable
 ```
 
-Omarchy plugins run as normal code inside the Omarchy shell, so read the code before you
-enable a plugin you don't know. To remove Vitrin:
+Plugins run inside the Omarchy shell with your permissions, so it's worth reading the code
+of any plugin before you enable it. To remove Vitrin:
 
 ```bash
 omarchy plugin remove vitrin
 ```
 
-## Settings
+## Using the dock
 
-A new dock starts with Files, your default terminal and your default browser, then
-Downloads and Trash. Vitrin keeps its settings in `~/.config/omarchy/vitrin.json`. Most of them can be changed
-from the dock itself, but the file is plain JSON and can be edited by hand; the dock picks up
-changes when the file is saved.
+- **Apps**: Click an app icon on the dock to open it, switch to it, or cycle through its
+  open windows. Middle-click opens a new window; right-click lists its windows and options.
+  You can pin apps to keep them in the dock, and drag icons to reorder them, or drag one up
+  and out of the dock to remove it. Apps you haven't pinned sit in their own section: the
+  ones that are running, plus the last three you closed. Drag one among your pinned apps to
+  keep it.
+- **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
+  newest files in a stack, or middle-click it to open it in Files; the Trash always opens in
+  Files. To add a shortcut, drag a folder onto the dock between the folders. You can drag
+  shortcuts to reorder them, or up and out of the dock to remove them. Right-click a folder
+  for its options.
+- **Dividers**: Right-click a divider to turn hiding on or off, or to open Dock Settings.
+  Drag a divider up or down to resize the dock.
+- **Dropping files**: Drop files on an app to open them with it, or on a folder (including
+  Trash) to move them there. If a file is on another drive, it's copied to the folder
+  instead of being moved. Hold a drag over an open app's icon for a second to bring its
+  window to the front.
 
-```jsonc
-{
-  "settings": {
-    "iconSize": 52,         // 32-72
-    "autoHide": true,
-    "hideDelay": 500,       // milliseconds, 0-2000
-    "animateLaunch": true,
-    "dividerResize": true,  // drag a divider to resize
-    "showRecent": true      // the section with running and recent apps
-  },
-  // Desktop entry IDs, in dock order (Files always comes first).
-  "pins": ["org.gnome.Nautilus", "Alacritty", "chromium"],
-  // Folder shortcuts on the right. "icon" is an icon name or an image path. The Trash
-  // shows a full trash can while it has items: the theme's "-full" variant of its icon
-  // (user-trash-full), or "iconFull" when its icon is an image path.
-  // openAs / displayAs: "stack" or "folder" (Trash is always a folder).
-  "folders": [
-    { "name": "Downloads", "icon": "folder-download", "path": "~/Downloads" },
-    { "name": "Trash", "icon": "user-trash", "path": "trash:///" }
-  ],
-  // The running/recent apps section, in order (kept up to date by Vitrin).
-  "recent": [{ "key": "mpv", "quitAt": 1793830000000 }],
-  // Put one app's windows under another app's icon:
-  // { "<window app id>": "<desktop entry id>" }. Rarely needed; Vitrin also adds
-  // entries here itself when it works out which app an unrecognized window belongs to.
-  "aliases": {}
-}
+## Settings and configuration
+
+Most settings are in Dock Settings (right-click a divider). They're saved in
+`~/.config/omarchy/vitrin.json`, which you can also edit by hand; the dock picks up the
+changes when you save the file.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `iconSize` | `52` | Icon size in pixels, 32 to 72 |
+| `autoHide` | `true` | Hide the dock until the pointer reaches the bottom edge |
+| `hideDelay` | `500` | Milliseconds before it hides, 0 to 2000 |
+| `showRecent` | `true` | Show running and recent apps in their own section |
+| `dividerResize` | `true` | Resize the dock by dragging a divider |
+| `animateLaunch` | `true` | Bounce an icon while its app starts |
+
+`pins` lists your pinned apps by desktop entry ID, in order. `folders` lists your folder
+shortcuts, in order, with the Trash always last. Each one looks like this:
+
+```json
+{ "name": "Projects", "path": "~/Projects", "icon": "folder", "displayAs": "stack" }
 ```
 
-(The file itself can't contain comments; they're only here to explain the fields.)
+`displayAs` is `"stack"` to show the folder's newest files on its dock icon, or `"folder"`
+to show the folder icon. `icon` is an icon name or a path to an image.
 
-If the file can't be read, for example after a typo, Vitrin keeps its current settings,
-doesn't save over your file, and leaves a copy next to it as `vitrin.json.broken`.
+If the file can't be read (after a typo, for example), Vitrin keeps its current settings,
+doesn't overwrite your file, and saves a copy of it as `vitrin.json.broken`.
 
-## Blur (optional)
+## Look and feel
 
-For a frosted-glass look behind the dock, add this to `~/.config/hypr/looknfeel.lua`.
-Hyprland only blurs layers when blur is on, and Omarchy makes every window very slightly
-transparent, so this turns blur on but keeps it off for windows:
+Vitrin takes its colors from your Omarchy theme and its icons from your icon theme, so it
+matches the rest of your desktop and changes along with it when you switch themes.
+
+Blur behind the dock is the one part you set up yourself, since plugins can't change
+Hyprland's settings. Add these lines to `~/.config/hypr/looknfeel.lua`. Omarchy makes
+windows slightly transparent, so they turn blur on for the dock only:
 
 ```lua
 hl.config({ decoration = { blur = { enabled = true, size = 8, passes = 2 } } })
@@ -109,44 +84,39 @@ o.window(".*", { no_blur = true })
 hl.layer_rule({ match = { namespace = "^vitrin$" }, blur = true, ignore_alpha = 0.3 })
 ```
 
-Blur costs GPU time; on older machines, check that the dock still slides up smoothly.
+## Troubleshooting
 
-## If an app shows the wrong icon or name
-
-Some apps' windows don't identify themselves the way their desktop entry says (for
-example LocalSend's windows are `org.localsend.localsend_app`, its entry `localsend`).
-Vitrin then tries, in order: clues from the window's process (the entry it was launched
-from, its program), the parts of its id, and what it learned from launching it from the
-dock. An app it still can't place shows under a tile with its initial and a name made from
-its id, and the shell log says which id to add to `aliases`, for example:
+**An app shows the wrong icon or name.** Some apps' windows don't identify themselves the
+way their desktop entry expects. The shell log names the window's ID; add it to `aliases`
+in the config file, pointing to the app's desktop entry ID:
 
 ```json
 "aliases": { "org.localsend.localsend_app": "localsend" }
 ```
 
-The shell log is at `/run/user/$UID/quickshell/by-id/*/log.qslog` (read it with `qs log`).
-
-## Known limitations
-
-- With hiding off, Omarchy's volume/brightness pop-up overlaps the top of the dock.
-- In full-screen games, pushing the pointer to the bottom edge brings up the dock (as on
-  macOS). Games that capture the pointer aren't affected.
-
-## Development
-
-Vitrin is a regular Omarchy plugin: `manifest.json`, the QML files, and helper scripts in
-`scripts/`. After changing the code, restart the shell to load it:
-
-```bash
-omarchy restart shell
-```
-
-Shell output (warnings and errors) can be read with:
+To read the shell log:
 
 ```bash
 quickshell log -p "$OMARCHY_PATH/shell"
 ```
 
+## Known limitations
+
+- After changing the icon theme, the dock shows the new icons once the shell restarts
+  (`omarchy restart shell`, or log out and back in).
+- With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.
+- In full-screen games, the bottom edge can still bring up the dock, unless the game
+  captures the pointer.
+
+## Development
+
+Vitrin is a regular Omarchy plugin: `manifest.json`, the QML files, and helper scripts in
+`scripts/`. Restart the shell to load changes:
+
+```bash
+omarchy restart shell
+```
+
 ## License
 
-[MIT](LICENSE) © 2026 Iren Kuyucu
+Vitrin is released under the [MIT License](LICENSE).

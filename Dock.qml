@@ -1417,7 +1417,7 @@ Item {
   // middle-click opens it in Files. Each folder has one option, saved in the config file:
   //   displayAs: "stack"  -> the dock icon shows its newest files piled up (the default)
   //              "folder" -> the dock icon is the folder icon
-  // Routine refreshes (each time the dock appears, and every 15 s with hiding off) list a
+  // Routine refreshes (each time the dock appears, and when a folder changes) list a
   // stack's first screenful (4 x 3), so a stack opens complete at once, and the dock icon's
   // pile takes its newest 3 from them (12 cost about 5% more than 3: ~6 ms in 1,000 files).
   // An open stack then loads the folder's newest stackMax entries in the background, which
@@ -1599,17 +1599,63 @@ Item {
     onTriggered: root.refreshFolders()
   }
 
-  // With hiding off the dock is always on screen (it never slides up, which is when the
-  // other refreshes happen), so keep its stack icons and the Trash's full/empty icon current.
-  Timer {
-    interval: 15000
-    repeat: true
-    running: !root.autoHide && root.dockAllowed
-    onTriggered: {
-      root.refreshFolders()
-      root.refreshTrash()
+  // ------------------------------------------------------------ watching folders
+  // The system reports files arriving in or leaving the dock's folders and the Trash (see
+  // scripts/watch-folders.sh), so stacks and the Trash's full/empty icon update right away and
+  // nothing runs in between, with hiding on or off. (The dock sliding up also refreshes them.)
+  // Only while Vitrin is the dock in use (see dockAllowed); restarted when the folders change.
+  readonly property string trashFilesDir: root.home + "/.local/share/Trash/files"
+  readonly property var watchedDirs: {
+    if (!root.dockAllowed) return []
+    var dirs = []
+    for (var i = 0; i < root.folders.length; i++) {
+      var f = root.folders[i]
+      dirs.push(isTrash(f) ? root.trashFilesDir : expandPath(f.path))
+    }
+    return dirs
+  }
+
+  Process {
+    id: folderWatcher
+    stdout: SplitParser {
+      onRead: function(line) {
+        var dir = String(line).replace(/\/+$/, "")
+        if (dir === root.trashFilesDir) trashRefreshSoon.restart()
+        else folderRefreshSoon.restart()
+      }
+    }
+    // 0: nothing to watch (all folders missing); anything else: it stopped unexpectedly, so
+    // try again shortly.
+    onExited: function(code) {
+      if (root.watcherStops > 0) {         // stopped on purpose, to watch other folders
+        root.watcherStops--
+        if (root.watcherStops === 0) Qt.callLater(root.startWatcher)
+        return
+      }
+      if (code !== 0 && root.watchedDirs.length > 0) watcherRestart.restart()
     }
   }
+  Timer {
+    id: watcherRestart
+    interval: 2000
+    onTriggered: root.restartWatcher()
+  }
+  property int watcherStops: 0            // stops asked for whose exit hasn't come yet
+  function restartWatcher() {
+    if (folderWatcher.running) {
+      root.watcherStops++                  // starts again once it has stopped
+      folderWatcher.running = false
+    } else {
+      startWatcher()
+    }
+  }
+  function startWatcher() {
+    if (folderWatcher.running || root.watchedDirs.length === 0) return
+    folderWatcher.command = ["bash", root.script("watch-folders.sh")].concat(root.watchedDirs)
+    folderWatcher.running = true
+  }
+  onWatchedDirsChanged: Qt.callLater(root.restartWatcher)
+
 
   onFoldersChanged: folderRefreshSoon.restart()
 

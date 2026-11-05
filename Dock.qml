@@ -108,7 +108,7 @@ Item {
   // ------------------------------------------------------------ terminal
   // Omarchy opens some terminal windows under its own app id ("org.omarchy.terminal")
   // and others under the terminal's (e.g. "foot"). Both are grouped under the default
-  // terminal's icon, shown as "Terminal", and new ones are opened the Omarchy way.
+  // terminal's icon, and new ones are opened the Omarchy way.
   // The default terminal is whatever Omarchy is set to use (foot, Alacritty, Ghostty,
   // Kitty, ...); see scripts/default-terminal.sh.
   property string terminalApp: ""
@@ -1178,7 +1178,7 @@ Item {
     return {
       key: key,
       entry: entry,
-      name: isTerminal(key) ? "Terminal" : (entry ? entry.name : prettyName(key, windows)),
+      name: entry ? entry.name : prettyName(key, windows),
       icons: iconCandidatesFor(entry, key),     // see pickIcon
       pinned: root.pins.indexOf(key) !== -1,
       windows: windows

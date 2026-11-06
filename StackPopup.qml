@@ -49,12 +49,13 @@ PopupWindow {
 
   onVisibleChanged: if (!visible) tileMenuFile = null
 
-  // Keys for a stack opened with the mouse (see the dock's stackKey); a keyboard-opened one gets
-  // them through the dock's own key handler.
+  // The stack's keys when the keyboard is in this window: a stack opened with the mouse, or a
+  // keyboard-opened one after a click inside it moved the keyboard here (the dock's own key
+  // handler has it otherwise; only one of the two ever does).
   Item {
     focus: true
     Keys.onPressed: function(event) {
-      if (stack.window.stackByKey || !stack.window.stackOpen) { event.accepted = false; return }
+      if (!stack.window.stackOpen) { event.accepted = false; return }
       event.accepted = stack.window.stackKey(event)
     }
   }

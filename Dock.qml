@@ -2257,7 +2257,10 @@ Item {
     WlrLayershell.namespace: root.slug + "-choice"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-    onVisibleChanged: if (visible) choiceCard.forceActiveFocus()
+    // Which button the keyboard has: the default (right) one first. Left/Right or Tab move it,
+    // Enter picks it.
+    property bool focusDefault: true
+    onVisibleChanged: if (visible) { focusDefault = true; choiceCard.forceActiveFocus() }
 
     // No way around the question: clicks and scrolling outside it do nothing.
     MouseArea {
@@ -2270,9 +2273,18 @@ Item {
       id: choiceCard
       anchors.centerIn: parent
       focus: true
-      // Enter takes the default, the button on the right.
-      Keys.onReturnPressed: root.chooseDock(dockChoiceDialog.starting)
-      Keys.onEnterPressed: root.chooseDock(dockChoiceDialog.starting)
+      Keys.onPressed: function(event) {
+        event.accepted = true
+        switch (event.key) {
+        case Qt.Key_Left: dockChoiceDialog.focusDefault = false; break
+        case Qt.Key_Right: dockChoiceDialog.focusDefault = true; break
+        case Qt.Key_Tab: case Qt.Key_Backtab: dockChoiceDialog.focusDefault = !dockChoiceDialog.focusDefault; break
+        case Qt.Key_Return: case Qt.Key_Enter:
+          root.chooseDock(dockChoiceDialog.focusDefault ? dockChoiceDialog.starting : !dockChoiceDialog.starting)
+          break
+        default: event.accepted = false
+        }
+      }
       width: 540
       height: choiceColumn.implicitHeight + 48
       color: root.surface
@@ -2343,8 +2355,9 @@ Item {
             height: 32
             radius: root.rowRadius
             color: otherMouse.pressed ? Util.alpha(root.foreground, 0.16)
-                 : otherMouse.containsMouse ? root.rowHover
+                 : otherMouse.containsMouse || !dockChoiceDialog.focusDefault ? root.rowHover
                  : Util.alpha(root.foreground, 0.06)
+            FocusRing { dock: root; shown: !dockChoiceDialog.focusDefault }   // the keyboard's button
             Text {
               id: otherText
               anchors.centerIn: parent
@@ -2371,6 +2384,7 @@ Item {
             color: defaultMouse.pressed ? Qt.darker(root.accent, 1.15)
                  : defaultMouse.containsMouse ? Qt.lighter(root.accent, 1.08)
                  : root.accent
+            FocusRing { dock: root; shown: dockChoiceDialog.focusDefault }
             Text {
               id: defaultText
               anchors.centerIn: parent
@@ -2521,6 +2535,9 @@ Item {
         else hideTimer.restart()
       }
       property bool settingsOpen: false
+      // The control the keyboard has in the settings dialog: 0 Size, 1 Drag dividers, 2 Auto-hide,
+      // 3 Hide delay, 4 App launcher, 5 Recent apps, 6 Animate, 7 Reset, 8 Done.
+      property int settingsFocus: 0
       property bool menuOpen: false
       property Item menuTarget: null
       property var menuItem: null
@@ -2826,9 +2843,9 @@ Item {
 
       function exitKeyMode() {
         if (!win.keyMode) return
+        win.keyMode = false
         if (win.menuByKey) win.closeMenu()
         if (win.stackByKey) win.closeStack()
-        win.keyMode = false
         win.keyHeld = false
         win.keyPrepared = false
         win.kbButton = null
@@ -3015,6 +3032,20 @@ Item {
         if (win.keyMode && win.kbButton) win.showTip(win.kbButton, win.kbButton.label, true)
       }
 
+      // A menu or stack just closed in keyboard mode. If a click had moved the keyboard into its
+      // window, nothing would hand it back to the dock: take it again (Exclusive, then on-demand
+      // once it's there, like when keyboard mode starts).
+      function reclaimKeyboard() {
+        if (!win.keyMode) return
+        win.keyHeld = false
+        keyReclaim.restart()
+      }
+      Timer {
+        id: keyReclaim
+        interval: 200
+        onTriggered: if (win.keyMode) win.keyHeld = true
+      }
+
       function keySelect(button) {
         if (win.kbButton === button && win.tipText !== "") return   // already there: leave the label alone
         win.kbButton = button
@@ -3073,7 +3104,7 @@ Item {
         Window.onActiveChanged: {
           if (!win.keyMode) return
           if (Window.active) win.keyHeld = true
-          else if (win.keyReleased) win.exitKeyMode()
+          else if (win.keyReleased && !win.settingsOpen) win.exitKeyMode()   // (Dock Settings has the keyboard meanwhile)
         }
         Keys.onPressed: function(event) {
           if (!win.keyMode) return
@@ -3099,6 +3130,21 @@ Item {
             else win.keyActivate()
             break
           case Qt.Key_Menu: win.keyOpenMenu(); break
+          // Ctrl+comma: Dock Settings. Ctrl+H: hide or show the dock automatically. Ctrl is for the
+          // dock itself, Shift for the highlighted icon.
+          case Qt.Key_Comma:
+            if (event.modifiers & Qt.ControlModifier) win.openSettings()
+            else event.accepted = false
+            break
+          case Qt.Key_H:
+            if (event.modifiers & Qt.ControlModifier) {
+              // Keyboard mode only exists while the dock is on screen: turning hiding on ends it (the
+              // dock then hides, and Super+D brings it back); turning it off leaves it on.
+              var hide = !root.autoHide
+              root.setSetting("autoHide", hide, true)
+              if (hide) win.exitKeyMode()
+            } else event.accepted = false
+            break
           case Qt.Key_F10:
             if (event.modifiers & Qt.ShiftModifier) win.keyOpenMenu()
             else event.accepted = false
@@ -3162,8 +3208,38 @@ Item {
         win.menuOpen = true
       }
 
+      // The settings dialog's keys: Tab/Shift+Tab (or Down/Up) move between the controls, Left/Right
+      // change a slider, Space or Enter toggles a switch, Enter presses a button, Esc closes.
+      function settingsKey(event) {
+        var last = 8
+        var step = function(dir) {
+          var next = win.settingsFocus
+          do { next = (next + dir + last + 1) % (last + 1) } while (next === 3 && !root.autoHide)  // (no delay without hiding)
+          win.settingsFocus = next
+        }
+        var switches = { 1: "dividerResize", 2: "autoHide", 4: "showApps", 5: "showRecent", 6: "animateLaunch" }
+        switch (event.key) {
+        case Qt.Key_Escape: win.closeSettings(); return true
+        case Qt.Key_Tab: step(event.modifiers & Qt.ShiftModifier ? -1 : 1); return true
+        case Qt.Key_Backtab: case Qt.Key_Up: step(-1); return true
+        case Qt.Key_Down: step(1); return true
+        case Qt.Key_Left: case Qt.Key_Right:
+          var dir = event.key === Qt.Key_Right ? 1 : -1
+          if (win.settingsFocus === 0) root.setSetting("iconSize", Math.max(32, Math.min(72, root.iconSize + dir * 4)), true)
+          else if (win.settingsFocus === 3) root.setSetting("hideDelay", Math.max(0, Math.min(2000, root.hideDelay + dir * 100)), true)
+          return true
+        case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space:
+          if (switches[win.settingsFocus] !== undefined) root.setSetting(switches[win.settingsFocus], !root[switches[win.settingsFocus]], true)
+          else if (event.key !== Qt.Key_Space && win.settingsFocus === 7) root.resetSettings()   // (buttons: Enter only)
+          else if (event.key !== Qt.Key_Space && win.settingsFocus === 8) win.closeSettings()
+          return true
+        }
+        return false
+      }
+
       function openSettings() {
         win.tipText = ""
+        win.settingsFocus = 0
         win.revealed = true
         win.settingsOpen = true
       }
@@ -3171,6 +3247,11 @@ Item {
       function closeSettings() {
         win.settingsOpen = false
         hideTimer.restart()
+        // Opened from keyboard mode (Ctrl+comma): back to the dock, the same icon highlighted.
+        if (win.keyMode) {
+          win.reclaimKeyboard()
+          if (win.kbButton) win.showTip(win.kbButton, win.kbButton.label, true)
+        }
       }
 
       // Swap the menu's rows with a short slide: dir 1 = into a submenu, -1 = back out.
@@ -3217,6 +3298,7 @@ Item {
       function closeStack(byOutsideClick) {
         if (win.stackOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.stackOpen = false
+        win.reclaimKeyboard()
         win.stackByKey = false
         win.stackKeyIndex = -1
         win.stackButtonFocus = false
@@ -3560,6 +3642,7 @@ Item {
       function closeMenu(byOutsideClick) {
         if (win.menuOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.menuOpen = false
+        win.reclaimKeyboard()
         win.menuByKey = false
         win.menuKeyRow = null
         win.menuKeyKey = ""
@@ -4154,11 +4237,13 @@ Item {
         implicitHeight: menuCard.height + root.shadowPad * 2
 
 
-        // Keys for a menu opened with the mouse (see menuKey).
+        // The menu's keys when the keyboard is in this window: a menu opened with the mouse, or a
+        // keyboard-opened one after a click inside it moved the keyboard here (the dock's own key
+        // handler has it otherwise; only one of the two ever does).
         Item {
           focus: true
           Keys.onPressed: function(event) {
-            if (win.menuByKey || !win.menuOpen) { event.accepted = false; return }
+            if (!win.menuOpen) { event.accepted = false; return }
             event.accepted = win.menuKey(event)
           }
         }
@@ -4397,7 +4482,7 @@ Item {
           id: settingsCard
           anchors.centerIn: parent
           focus: true
-          Keys.onEscapePressed: win.closeSettings()
+          Keys.onPressed: function(event) { event.accepted = win.settingsKey(event) }
           width: 360
           height: settingsColumn.implicitHeight + 32
           color: root.surface
@@ -4459,6 +4544,7 @@ Item {
                 to: 72
                 stepSize: 4
                 value: root.iconSize
+                focused: win.settingsFocus === 0
                 onMoved: function(v) { root.setSetting("iconSize", v, false) }
                 onReleased: function(v) { root.setSetting("iconSize", v, true) }
               }
@@ -4484,6 +4570,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.dividerResize
+                focused: win.settingsFocus === 1
                 onToggled: function(on) { root.setSetting("dividerResize", on, true) }
               }
             }
@@ -4515,6 +4602,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.autoHide
+                focused: win.settingsFocus === 2
                 onToggled: function(on) { root.setSetting("autoHide", on, true) }
               }
             }
@@ -4550,6 +4638,7 @@ Item {
                 to: 2000
                 stepSize: 100
                 value: root.hideDelay
+                focused: win.settingsFocus === 3
                 enabledLook: root.autoHide
                 onMoved: function(v) { root.setSetting("hideDelay", v, false) }
                 onReleased: function(v) { root.setSetting("hideDelay", v, true) }
@@ -4583,6 +4672,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.showApps
+                focused: win.settingsFocus === 4
                 onToggled: function(on) { root.setSetting("showApps", on, true) }
               }
             }
@@ -4607,6 +4697,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.showRecent
+                focused: win.settingsFocus === 5
                 onToggled: function(on) { root.setSetting("showRecent", on, true) }
               }
             }
@@ -4631,6 +4722,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.animateLaunch
+                focused: win.settingsFocus === 6
                 onToggled: function(on) { root.setSetting("animateLaunch", on, true) }
               }
             }
@@ -4648,8 +4740,9 @@ Item {
                 height: 32
                 radius: root.rowRadius
                 color: resetMouse.pressed ? Util.alpha(root.foreground, 0.16)
-                     : resetMouse.containsMouse ? root.rowHover
+                     : resetMouse.containsMouse || win.settingsFocus === 7 ? root.rowHover
                      : Util.alpha(root.foreground, 0.06)
+                FocusRing { dock: root; shown: win.settingsFocus === 7 }
                 Text {
                   id: resetText
                   anchors.centerIn: parent
@@ -4675,6 +4768,7 @@ Item {
                 color: doneMouse.pressed ? Qt.darker(root.accent, 1.15)
                      : doneMouse.containsMouse ? Qt.lighter(root.accent, 1.08)
                      : root.accent
+                FocusRing { dock: root; shown: win.settingsFocus === 8 }
                 Text {
                   id: doneText
                   anchors.centerIn: parent

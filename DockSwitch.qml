@@ -7,6 +7,7 @@ Item {
 
   required property var dock
   property bool checked: false
+  property bool focused: false          // the keyboard has it: a ring around the switch
   signal toggled(bool checked)
 
   implicitWidth: 42
@@ -27,6 +28,16 @@ Item {
       color: "#ffffff"
       Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
     }
+  }
+
+  Rectangle {
+    visible: control.focused
+    anchors.fill: parent
+    anchors.margins: -4
+    radius: height / 2
+    color: "transparent"
+    border.width: 2
+    border.color: control.dock.accent
   }
 
   MouseArea {

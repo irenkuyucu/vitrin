@@ -12,6 +12,7 @@ Item {
   property real stepSize: 1
   property real value: 0
   property bool enabledLook: true
+  property bool focused: false          // the keyboard has it: the knob gets a ring
 
   signal moved(real value)
   signal released(real value)
@@ -55,6 +56,18 @@ Item {
     color: "#ffffff"
     border.color: Util.alpha("#000000", 0.15)
     border.width: 1
+  }
+
+  Rectangle {
+    visible: control.focused
+    width: control.knobSize + 8
+    height: width
+    radius: width / 2
+    anchors.verticalCenter: parent.verticalCenter
+    x: control.fraction * (control.width - control.knobSize) - 4
+    color: "transparent"
+    border.width: 2
+    border.color: control.dock.accent
   }
 
   MouseArea {

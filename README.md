@@ -1,8 +1,8 @@
 # Vitrin
 
-A macOS-style dock for [Omarchy](https://omarchy.org). Move your pointer to the bottom
-edge to reveal your pinned, running, and recent apps alongside Downloads and Trash folders.
-Vitrin follows your Omarchy theme and runs inside the Quickshell session.
+A macOS-style dock for [Omarchy](https://omarchy.org). Vitrin shows your pinned, running,
+and recent apps alongside folder shortcuts like Downloads and Trash. It follows your Omarchy
+theme and runs inside the Quickshell session.
 
 <!-- Screenshot -->
 
@@ -15,15 +15,12 @@ Quickshell 0.3.2.
 omarchy plugin add https://github.com/irenkuyucu/vitrin.git --enable
 ```
 
-Omarchy 4.5 and later come with a dock of their own, shown on floating workspaces, where it
-would overlap Vitrin. Whenever both are on (when you enable Vitrin, or turn Omarchy's dock on
-later), Vitrin asks which one to keep and turns the other off. You can switch between the two
-any time in the Omarchy menu, under Setup > Plugins: disable the dock you're using, then
-enable the other. From a terminal, Omarchy's dock is `omarchy.dock`:
+Or open the Omarchy menu, go to Setup > Plugins > Add Plugin, and paste the URL.
 
-```bash
-omarchy plugin disable omarchy.dock
-```
+Omarchy 4.5 and later have a dock of their own, which shows up on floating workspaces and
+would overlap Vitrin there. When both are on, Vitrin asks which one to keep. To switch later,
+open the Omarchy menu, go to Setup > Plugins, disable the dock you're using, then enable the
+other.
 
 Plugins run inside the Omarchy shell with your permissions, so it's worth reading the code
 of any plugin before you enable it. To remove Vitrin:
@@ -47,16 +44,16 @@ omarchy plugin remove vitrin
   Apps icon moves like a pinned app; remove it by dragging it out or from its right-click
   menu, and bring it back with "Show app launcher in Dock" in Dock Settings.
 - **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
-  newest files in a stack, or middle-click it to open it in your file manager (Files on
-  Omarchy); the Trash always opens there. To add a shortcut, drag a folder onto the dock between the folders. You can drag
-  shortcuts to reorder them, or up and out of the dock to remove them. Right-click a folder
-  for its options.
+  newest files in a stack, or middle-click it to open it in your file manager; the Trash
+  always opens there. To add a shortcut, drag a folder onto the dock between the folders.
+  You can drag shortcuts to reorder them, or up and out of the dock to remove them.
+  Right-click a folder for its options.
 - **Dividers**: Right-click a divider to turn hiding on or off, or to open Dock Settings.
   Drag a divider up or down to resize the dock.
-- **Dropping files**: Drop files on an app to open them with it, or on a folder (including
-  Trash) to move them there. If a file is on another drive, it's copied to the folder
-  instead of being moved. Hold a drag over an open app's icon for a second to bring its
-  window to the front.
+- **Dropping files and folders**: Drop files or folders on an app to open them with it, or
+  on a folder (including Trash) to move them there. Anything on another drive is copied to
+  the folder instead of being moved. Hold a drag over an open app's icon for a second to
+  bring its window to the front.
 
 ## Settings and configuration
 

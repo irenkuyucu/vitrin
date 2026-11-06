@@ -1413,7 +1413,10 @@ Item {
     }
   }
   // In case the shell stopped while warping was off.
-  Component.onCompleted: Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
+  Component.onCompleted: {
+    Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
+    Quickshell.execDetached(["bash", root.script("keep-cursor.sh"), "restore"])
+  }
 
   // In the file manager (a new window: Nautilus's entry asks for one, see scripts/launch.sh).
   function openFolder(folder) {
@@ -2408,6 +2411,23 @@ Item {
     function refresh(): void {}
   }
 
+  // The dock windows by screen name (filled by each window as it appears).
+  property var docks: ({})
+
+  // Commands for key bindings: `omarchy-shell vitrin <command>`.
+  ShellIpc {
+    target: "vitrin"
+    enabled: root.dockAllowed
+    // Super+D: show the dock and drive it with the keyboard (again: leave).
+    function focus(): void {
+      var screen = root.focusedScreen()
+      var w = screen ? root.docks[screen.name] : null
+      if (!w) return
+      if (w.keyMode) w.exitKeyMode()
+      else w.enterKeyMode()
+    }
+  }
+
   function focusedScreen() {
     var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
     var screens = Quickshell.screens
@@ -2451,11 +2471,19 @@ Item {
         target: dockBox
         function onHeightChanged() { reservedHeightTimer.restart() }
       }
-      Component.onCompleted: reservedHeightTimer.restart()
+      Component.onCompleted: {
+        reservedHeightTimer.restart()
+        root.docks[win.screen.name] = win
+      }
+      Component.onDestruction: if (root.docks[win.screen.name] === win) delete root.docks[win.screen.name]
       WlrLayershell.namespace: root.slug           // the blur rule matches this name
       // Overlay, so it can slide up over full-screen apps too (like macOS).
       WlrLayershell.layer: WlrLayer.Overlay
-      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+      // Only while the dock is driven by the keyboard (see enterKeyMode): Exclusive to get the
+      // keyboard (nothing else makes the compositor hand it over), then on-demand, so that a
+      // click on another window can take it away again (which ends the mode).
+      WlrLayershell.keyboardFocus: !win.keyMode ? WlrKeyboardFocus.None
+        : (win.keyReleased ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
 
       property bool revealed: !root.autoHide
 
@@ -2737,6 +2765,157 @@ Item {
       Region { id: noInputRegion }
       Region { id: zoneRegion; item: zone }
       Region { id: hotspotRegion; item: hotspot }
+
+      // ---------------------------------------------------------- keyboard mode
+      property bool keyMode: false
+      property Item kbButton: null            // the highlighted icon
+
+      // The icons in order, left to right (leaving ones skipped).
+      function keyButtons() {
+        var list = []
+        var kids = row.children
+        for (var i = 0; i < kids.length; i++) {
+          var c = kids[i]
+          if (c.dock !== undefined && c.isFolder !== undefined && !c.isLeaving && c.visible) list.push(c)
+        }
+        list.sort(function(a, b) { return a.mapToItem(row, 0, 0).x - b.mapToItem(row, 0, 0).x })
+        return list
+      }
+
+      // 0 = apps, 1 = recent apps, 2 = folders (the dividers' sections).
+      function keySection(b) {
+        if (b.isFolder) return 2
+        return root.hasMiddle && root.middle.indexOf(b.item.key) !== -1 ? 1 : 0
+      }
+
+      function enterKeyMode() {
+        if (win.suppressed || win.keyMode) return
+        win.closeMenu()
+        win.closeStack()
+        win.reveal()
+        var list = win.keyButtons()
+        if (list.length === 0) return
+        win.keyMode = true
+        win.keyHeld = false
+        keyGiveUp.restart()
+        win.keyPrepared = false
+        keySetup.running = true
+        keyCatcher.forceActiveFocus()
+        win.keySelect(list[0])
+        keyTipRefresh.restart()
+      }
+
+      // The first label is placed while a hidden dock is still sliding up (from where the icon
+      // was, not where it ends up): place it again once the slide (180 ms) is done.
+      Timer {
+        id: keyTipRefresh
+        interval: 260
+        onTriggered: if (win.keyMode && tip.visible) tip.anchor.updateAnchor()
+      }
+
+      function exitKeyMode() {
+        if (!win.keyMode) return
+        win.keyMode = false
+        win.keyHeld = false
+        win.keyPrepared = false
+        win.kbButton = null
+        win.tipTarget = null      // hides the label as it is (clearing its text first made it jump)
+        Quickshell.execDetached(["bash", root.script("keep-cursor.sh"), "restore"])
+        hideTimer.restart()
+      }
+
+      function keySelect(button) {
+        if (win.kbButton === button && win.tipText !== "") return   // already there: leave the label alone
+        win.kbButton = button
+        win.showTip(button, button.label, true)
+      }
+
+      function keyMove(delta) {
+        var list = win.keyButtons()
+        if (list.length === 0) return
+        var at = list.indexOf(win.kbButton)
+        win.keySelect(list[(at + delta + list.length) % list.length])   // wraps around
+      }
+
+      function keyEdge(last) {
+        var list = win.keyButtons()
+        if (list.length > 0) win.keySelect(list[last ? list.length - 1 : 0])
+      }
+
+      // Tab: the first icon of the next (or previous) section, wrapping around.
+      function keySection_step(dir) {
+        var list = win.keyButtons()
+        if (list.length === 0) return
+        var sections = []
+        for (var i = 0; i < list.length; i++) {
+          var s = win.keySection(list[i])
+          if (sections.indexOf(s) === -1) sections.push(s)
+        }
+        var at = sections.indexOf(win.keySection(win.kbButton))
+        var target = sections[(at + dir + sections.length) % sections.length]
+        for (var j = 0; j < list.length; j++) {
+          if (win.keySection(list[j]) === target) { win.keySelect(list[j]); return }
+        }
+      }
+
+      // Enter: what a click does. The dock lets go of the keyboard first, so the app or
+      // stack that follows gets it.
+      function keyActivate() {
+        var button = win.kbButton
+        if (!button) return
+        win.exitKeyMode()
+        Qt.callLater(function() {
+          if (button.isFolder) win.folderClicked(button, button.item)
+          else root.activate(button.item, win.screen)
+        })
+      }
+
+      Item {
+        id: keyCatcher
+        focus: win.keyMode
+        Window.onActiveChanged: {
+          if (!win.keyMode) return
+          if (Window.active) win.keyHeld = true
+          else if (win.keyReleased) win.exitKeyMode()
+        }
+        Keys.onPressed: function(event) {
+          if (!win.keyMode) return
+          event.accepted = true
+          switch (event.key) {
+          case Qt.Key_Left: case Qt.Key_Up: win.keyMove(-1); break
+          case Qt.Key_Right: case Qt.Key_Down: win.keyMove(1); break
+          case Qt.Key_Home: win.keyEdge(false); break
+          case Qt.Key_End: win.keyEdge(true); break
+          // (Shift+Tab arrives as Backtab, or as Tab with Shift held, depending on the keyboard.)
+          case Qt.Key_Tab: win.keySection_step(event.modifiers & Qt.ShiftModifier ? -1 : 1); break
+          case Qt.Key_Backtab: win.keySection_step(-1); break
+          case Qt.Key_Return: case Qt.Key_Enter: win.keyActivate(); break
+          case Qt.Key_Escape: win.exitKeyMode(); break
+          default: event.accepted = false
+          }
+        }
+      }
+
+      // Keyboard mode lasts exactly as long as the dock holds the keyboard. Clicking another
+      // window (or switching workspace) takes it away and ends the mode. No focus grab: a grab
+      // also cuts the pointer off from every other window. With follow_mouse 2 (set while the
+      // mode is on, see scripts/keep-cursor.sh) merely hovering another window doesn't take
+      // the keyboard, and the pointer keeps working there.
+      property bool keyHeld: false        // the dock has the keyboard
+      property bool keyPrepared: false    // follow_mouse is already set (see keep-cursor.sh)
+      // Let go of Exclusive only when both are true: if follow_mouse were still 1 at that
+      // moment, Hyprland would hand the keyboard to the window under the pointer.
+      readonly property bool keyReleased: keyHeld && keyPrepared
+      Process {
+        id: keySetup
+        command: ["bash", root.script("keep-cursor.sh"), "off"]
+        onExited: win.keyPrepared = true
+      }
+      Timer {
+        id: keyGiveUp
+        interval: 1500
+        onTriggered: if (win.keyMode && !win.keyHeld) win.exitKeyMode()   // the keyboard never came
+      }
 
       function reveal() {
         if (win.suppressed) return
@@ -3139,13 +3318,17 @@ Item {
         return Date.now() - win.popupClosedAt < 300
       }
 
-      function showTip(button, text) {
+      // fromKey: the label of the icon chosen with the keyboard. In keyboard mode the pointer's
+      // own labels are ignored (a pointer resting on an icon would override the keyboard's).
+      function showTip(button, text, fromKey) {
         if (win.menuOpen || win.stackOpen) return
+        if (win.keyMode && !fromKey) return
         win.tipTarget = button
         win.tipText = text
       }
 
       function hideTip(button) {
+        if (win.keyMode) return
         if (win.tipTarget === button) win.tipText = ""
       }
 
@@ -3156,7 +3339,7 @@ Item {
         interval: Math.max(150, root.hideDelay)
         onTriggered: {
           if (!win.hidingNow || win.settingsOpen) return
-          if (zoneHover.hovered || hotspot.containsMouse || win.menuOpen || win.stackOpen) return
+          if (zoneHover.hovered || hotspot.containsMouse || win.menuOpen || win.stackOpen || win.keyMode) return
           if (win.dragFrom !== -1 || win.dropDepth > 0 || win.dividerResizing) return
           win.revealed = false
           win.tipText = ""

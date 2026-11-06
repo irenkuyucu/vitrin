@@ -150,6 +150,20 @@ Item {
     }
   }
 
+  // The icon chosen with the keyboard (see Dock.qml's keyboard mode).
+  readonly property bool kbFocused: window.keyMode && window.kbButton === button
+  // The same square for every icon, centered on it (icons differ in how much of their
+  // box they fill, so a box around the artwork would differ from icon to icon).
+  Rectangle {
+    visible: button.kbFocused
+    width: Math.round(window.size * 1.2)
+    height: width
+    x: iconBox.x + (iconBox.width - width) / 2
+    y: iconBox.y + (iconBox.height - height) / 2
+    radius: Math.round(window.size * 0.24)
+    color: Util.alpha(dock.foreground, 0.18)
+  }
+
   // Like the macOS dock: no hover highlight (the name label shows instead),
   // and the icon dims briefly while pressed.
   Item {

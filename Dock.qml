@@ -2775,6 +2775,11 @@ Item {
       property var menuKeyRow: null           // the highlighted row
       property string menuKeyKey: ""          // and its rowKey (the menu's Repeater hands out copies of rows)
       property string menuReturnKey: ""       // the submenu row we came from: highlighted again on the way back
+      // A stack opened from keyboard mode: like menus, the dock keeps the keyboard and the stack's
+      // focus grab stays off. stackKeyIndex is the highlighted file (-1: none yet).
+      property bool stackByKey: false
+      property int stackKeyIndex: -1
+      property bool stackButtonFocus: false   // the stack's "Open in Files" button has the highlight
 
       // The icons in order, left to right (leaving ones skipped).
       function keyButtons() {
@@ -2822,6 +2827,7 @@ Item {
       function exitKeyMode() {
         if (!win.keyMode) return
         if (win.menuByKey) win.closeMenu()
+        if (win.stackByKey) win.closeStack()
         win.keyMode = false
         win.keyHeld = false
         win.keyPrepared = false
@@ -2829,6 +2835,81 @@ Item {
         win.tipTarget = null      // hides the label as it is (clearing its text first made it jump)
         Quickshell.execDetached(["bash", root.script("keep-cursor.sh"), "restore"])
         hideTimer.restart()
+      }
+
+      // ---- stacks by keyboard
+      function keyOpenStack(button) {
+        win.stackByKey = true
+        win.stackKeyIndex = 0
+        win.tipText = ""
+        win.folderClicked(button, button.item)
+      }
+
+      // The keys of an open stack, however it was opened (see menuKey). Returns whether used.
+      function stackKey(event) {
+        // A file's menu is open: it takes the keys.
+        if (stackPopup.tileMenuFile !== null) return stackPopup.tileMenuKey(event)
+        // The "Open in Files" button has the highlight (Tab gets there and back).
+        if (win.stackButtonFocus) {
+          switch (event.key) {
+          case Qt.Key_Escape: win.closeKeyStack(); return true
+          case Qt.Key_Return: case Qt.Key_Enter:
+            win.exitKeyMode()
+            stackPopup.openFolder()
+            return true
+          case Qt.Key_Tab: case Qt.Key_Backtab: case Qt.Key_Up: win.stackButtonFocus = false; return true
+          }
+          return false
+        }
+        var files = stackPopup.files
+        var n = files.length
+        var cols = stackPopup.columns
+        var i = Math.min(win.stackKeyIndex, n - 1)
+        var next = i
+        switch (event.key) {
+        case Qt.Key_Escape: win.closeKeyStack(); return true
+        case Qt.Key_Tab: case Qt.Key_Backtab: win.stackButtonFocus = true; return true
+        case Qt.Key_Menu: stackPopup.showTileMenuAt(i); return true
+        case Qt.Key_F10:
+          if (!(event.modifiers & Qt.ShiftModifier)) return false
+          stackPopup.showTileMenuAt(i)
+          return true
+        case Qt.Key_Return: case Qt.Key_Enter:
+          if (event.modifiers & Qt.ShiftModifier) { stackPopup.showTileMenuAt(i); return true }
+          if (i >= 0 && i < n) {
+            win.exitKeyMode()
+            stackPopup.openFile(files[i])
+          }
+          return true
+        case Qt.Key_Left: next = i < 0 ? 0 : (i - 1 + n) % n; break
+        case Qt.Key_Right: next = i < 0 ? 0 : (i + 1) % n; break
+        case Qt.Key_Up:
+          if (i < 0) next = 0
+          else if (i - cols >= 0) next = i - cols
+          else {   // off the top: the bottom of the same column
+            next = Math.floor((n - 1) / cols) * cols + i % cols
+            if (next >= n) next = Math.max(0, next - cols)
+          }
+          break
+        case Qt.Key_Down:
+          if (i < 0) next = 0
+          else if (i + cols < n) next = i + cols
+          else next = i % cols            // off the bottom: the top of the same column
+          break
+        case Qt.Key_Home: next = 0; break
+        case Qt.Key_End: next = n - 1; break
+        case Qt.Key_PageUp: next = Math.max(0, i - stackPopup.rows * cols); break
+        case Qt.Key_PageDown: next = Math.min(n - 1, i + stackPopup.rows * cols); break
+        default: return false
+        }
+        if (n > 0) win.stackKeyIndex = Math.max(0, Math.min(n - 1, next))
+        return true
+      }
+
+      // Esc: close the stack and go back to the dock, the folder's icon still highlighted.
+      function closeKeyStack() {
+        win.closeStack(true)
+        if (win.keyMode && win.kbButton) win.showTip(win.kbButton, win.kbButton.label, true)
       }
 
       // ---- menus by keyboard
@@ -2973,6 +3054,12 @@ Item {
       function keyActivate() {
         var button = win.kbButton
         if (!button) return
+        // A folder's stack opens right here and takes the arrow keys; the rest ends keyboard mode.
+        if (button.isFolder && !root.isTrash(button.item)) {
+          if (root.isMissing(button.item)) win.keyOpenMenu()      // explains, offers removal
+          else win.keyOpenStack(button)
+          return
+        }
         win.exitKeyMode()
         Qt.callLater(function() {
           if (button.isFolder) win.folderClicked(button, button.item)
@@ -2993,6 +3080,10 @@ Item {
           event.accepted = true
           if (win.menuByKey) {
             event.accepted = win.menuKey(event)
+            return
+          }
+          if (win.stackByKey) {
+            event.accepted = win.stackKey(event)
             return
           }
           switch (event.key) {
@@ -3126,6 +3217,9 @@ Item {
       function closeStack(byOutsideClick) {
         if (win.stackOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.stackOpen = false
+        win.stackByKey = false
+        win.stackKeyIndex = -1
+        win.stackButtonFocus = false
         root.stackOpenDir = ""
         root.dropPreviewQueue()
         hideTimer.restart()
@@ -4265,7 +4359,7 @@ Item {
       // declared inside the popup itself never activated).
       // (Not while a file is dragged out of it: the stack must stay until the drop.)
       HyprlandFocusGrab {
-        active: win.stackOpen && !win.stackDragging
+        active: win.stackOpen && !win.stackDragging && !win.stackByKey
         windows: [stackPopup]
         onCleared: win.closeStack(true)
       }

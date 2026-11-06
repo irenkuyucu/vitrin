@@ -31,6 +31,7 @@ PopupWindow {
 
   // Small per-file menu, drawn inside the stack (right-click a file).
   property var tileMenuFile: null
+  property int tileMenuIndex: 0          // the highlighted row of that menu (keyboard)
   property real tileMenuX: 0
   property real tileMenuY: 0
 
@@ -48,6 +49,16 @@ PopupWindow {
 
   onVisibleChanged: if (!visible) tileMenuFile = null
 
+  // Keys for a stack opened with the mouse (see the dock's stackKey); a keyboard-opened one gets
+  // them through the dock's own key handler.
+  Item {
+    focus: true
+    Keys.onPressed: function(event) {
+      if (stack.window.stackByKey || !stack.window.stackOpen) { event.accepted = false; return }
+      event.accepted = stack.window.stackKey(event)
+    }
+  }
+
   function openFile(file) {
     stack.window.closeStack()
     stack.dock.openFile(file.path)
@@ -62,6 +73,31 @@ PopupWindow {
     var folder = stack.folder
     stack.window.closeStack()
     stack.dock.openFolder(folder)
+  }
+
+  // A file's menu from the keyboard (Shift+Enter, Menu, Shift+F10 on the highlighted file).
+  function showTileMenuAt(index) {
+    var tile = grid.itemAtIndex(index)
+    if (!tile || index < 0 || index >= files.length) return
+    showTileMenu(tile, files[index])
+    tileMenuIndex = 0
+  }
+
+  // Its keys: Up/Down move, Enter picks, Esc closes just the menu. Returns whether the key was used.
+  function tileMenuKey(event) {
+    switch (event.key) {
+    case Qt.Key_Up: case Qt.Key_Down: tileMenuIndex = (tileMenuIndex + 1) % 2; return true
+    case Qt.Key_Home: tileMenuIndex = 0; return true
+    case Qt.Key_End: tileMenuIndex = 1; return true
+    case Qt.Key_Escape: tileMenuFile = null; return true
+    case Qt.Key_Return: case Qt.Key_Enter:
+      var file = tileMenuFile
+      window.exitKeyMode()
+      if (tileMenuIndex === 0) openFile(file)
+      else showInFiles(file)
+      return true
+    }
+    return false
   }
 
   function showTileMenu(tile, file) {
@@ -147,10 +183,19 @@ PopupWindow {
           function onFolderChanged() { grid.positionViewAtBeginning() }
           function onVisibleChanged() { if (stack.visible) grid.positionViewAtBeginning() }
         }
+        // The highlighted file (arrow keys) stays in view.
+        Connections {
+          target: stack.window
+          function onStackKeyIndexChanged() {
+            if (stack.window.stackKeyIndex >= 0 && stack.window.stackKeyIndex < stack.files.length)
+              grid.positionViewAtIndex(stack.window.stackKeyIndex, GridView.Contain)
+          }
+        }
 
           delegate: Item {
             id: tile
             required property var modelData
+            required property int index
             width: stack.tileWidth
             height: stack.tileHeight
 
@@ -165,7 +210,8 @@ PopupWindow {
             Drag.hotSpot.x: stack.iconSize / 2
             Drag.hotSpot.y: stack.iconSize / 2
             Drag.active: tileMouse.drag.active
-            Drag.onDragStarted: stack.window.stackDragging = true
+            // (A drag takes the keyboard away from the dock without telling it, so keyboard mode ends here.)
+            Drag.onDragStarted: { stack.window.stackDragging = true; stack.window.exitKeyMode() }
             Drag.onDragFinished: function(dropAction) {
               stack.window.stackDragging = false
               stack.window.closeStack()
@@ -178,7 +224,8 @@ PopupWindow {
               anchors.margins: 2
               radius: stack.dock.rowRadius
               color: tileMouse.pressed && !tileMouse.dismissing ? Util.alpha(stack.dock.foreground, 0.16)
-                   : tileMouse.containsMouse || stack.tileMenuFile === tile.modelData ? stack.dock.rowHover
+                   : tileMouse.containsMouse || stack.tileMenuFile === tile.modelData
+                     || stack.window.stackKeyIndex === tile.index ? stack.dock.rowHover
                    : "transparent"
             }
 
@@ -290,8 +337,12 @@ PopupWindow {
           height: parent.height
           radius: stack.dock.rowRadius
           color: openMouse.pressed ? Util.alpha(stack.dock.foreground, 0.16)
+               : stack.window.stackButtonFocus ? Util.alpha(stack.dock.foreground, 0.22)
                : openMouse.containsMouse ? stack.dock.rowHover
                : Util.alpha(stack.dock.foreground, 0.06)
+          // The keyboard's highlight (Tab) also gets an outline, so it can't be missed.
+          border.width: stack.window.stackButtonFocus ? 1 : 0
+          border.color: Util.alpha(stack.dock.foreground, 0.45)
           Text {
             id: openText
             anchors.centerIn: parent
@@ -340,10 +391,11 @@ PopupWindow {
           ]
           delegate: Rectangle {
             required property var modelData
+            required property int index
             width: tileMenuColumn.width
             height: 30
             radius: stack.dock.rowRadius
-            color: rowMouse.containsMouse ? stack.dock.rowHover : "transparent"
+            color: rowMouse.containsMouse || stack.tileMenuIndex === index ? stack.dock.rowHover : "transparent"
             Text {
               anchors.verticalCenter: parent.verticalCenter
               x: 10
@@ -356,6 +408,7 @@ PopupWindow {
               id: rowMouse
               anchors.fill: parent
               hoverEnabled: true
+              onEntered: stack.tileMenuIndex = parent.index
               onClicked: {
                 var file = stack.tileMenuFile
                 if (parent.modelData.act === "open") stack.openFile(file)

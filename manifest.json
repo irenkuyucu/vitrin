@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "vitrin",
   "name": "Vitrin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Iren Kuyucu",
-  "description": "A macOS-style dock for Omarchy: pinned and running apps, auto-hide, folder stacks (Downloads), Trash, drag and drop, and a settings dialog.",
+  "description": "A macOS-style dock for Omarchy.",
   "kinds": [
     "service"
   ],

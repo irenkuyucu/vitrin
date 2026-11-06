@@ -2844,6 +2844,7 @@ Item {
       function exitKeyMode() {
         if (!win.keyMode) return
         win.keyMode = false
+        win.keyTyped = ""
         if (win.menuByKey) win.closeMenu()
         if (win.stackByKey) win.closeStack()
         win.keyHeld = false
@@ -3049,7 +3050,60 @@ Item {
       function keySelect(button) {
         if (win.kbButton === button && win.tipText !== "") return   // already there: leave the label alone
         win.kbButton = button
+        win.keyReveal(button)
         win.showTip(button, button.label, true)
+      }
+
+      // In a dock that scrolls (too many icons to fit), bring the highlighted icon into view.
+      function keyReveal(button) {
+        if (!win.overflowing) return
+        var x = button.mapToItem(rowView.contentItem, 0, 0).x
+        var margin = 12
+        if (x - margin < rowView.contentX) rowView.contentX = Math.max(0, x - margin)
+        else if (x + button.width + margin > rowView.contentX + rowView.width)
+          rowView.contentX = Math.min(rowView.maxX, x + button.width + margin - rowView.width)
+      }
+
+      // Typing jumps to an icon by name. One letter goes to the next icon starting with it (the same
+      // letter again, to the one after); several letters typed in a row narrow it down ("lo" for
+      // LocalSend). The letters are forgotten after a second. Case and accents don't matter.
+      property string keyTyped: ""
+      Timer {
+        id: keyTypedReset
+        interval: 1000
+        onTriggered: win.keyTyped = ""
+      }
+
+      // Lower case without accents (and the Turkish dotless i as i), so "o" finds "Öğrenci".
+      function keyFold(text) {
+        var s = text.toLowerCase().replace(/\u0131/g, "i")
+        try { s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "") } catch (e) {}
+        return s
+      }
+
+      function keyTypeEvent(event) {
+        var t = event.text
+        var plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+        if (!plain || t.length !== 1 || t.charCodeAt(0) < 32 || (t === " " && win.keyTyped === "")) {
+          event.accepted = false
+          return
+        }
+        event.accepted = true
+        var list = win.keyButtons()
+        var n = list.length
+        if (n === 0) return
+        var typed = win.keyTyped + t
+        var cycling = typed.split("").every(function(c) { return c.toLowerCase() === typed[0].toLowerCase() })
+        var prefix = win.keyFold(cycling ? t : typed)
+        var at = Math.max(0, list.indexOf(win.kbButton))
+        var found = null
+        for (var i = cycling ? 1 : 0; i <= n && !found; i++) {
+          var b = list[(at + i) % n]
+          if (win.keyFold(b.label).indexOf(prefix) === 0) found = b
+        }
+        win.keyTyped = typed
+        keyTypedReset.restart()
+        if (found) win.keySelect(found)
       }
 
       function keyMove(delta) {
@@ -3134,7 +3188,7 @@ Item {
           // dock itself, Shift for the highlighted icon.
           case Qt.Key_Comma:
             if (event.modifiers & Qt.ControlModifier) win.openSettings()
-            else event.accepted = false
+            else win.keyTypeEvent(event)
             break
           case Qt.Key_H:
             if (event.modifiers & Qt.ControlModifier) {
@@ -3143,14 +3197,14 @@ Item {
               var hide = !root.autoHide
               root.setSetting("autoHide", hide, true)
               if (hide) win.exitKeyMode()
-            } else event.accepted = false
+            } else win.keyTypeEvent(event)
             break
           case Qt.Key_F10:
             if (event.modifiers & Qt.ShiftModifier) win.keyOpenMenu()
             else event.accepted = false
             break
           case Qt.Key_Escape: win.exitKeyMode(); break
-          default: event.accepted = false
+          default: win.keyTypeEvent(event)
           }
         }
       }

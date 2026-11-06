@@ -4,7 +4,7 @@ A macOS-style dock for [Omarchy](https://omarchy.org). Vitrin shows your pinned,
 and recent apps alongside folder shortcuts like Downloads and Trash. It follows your Omarchy
 theme and runs inside the Quickshell session.
 
-<!-- Screenshot -->
+![Vitrin, a macOS-style dock for Omarchy](docs/screenshot.png)
 
 ## Install
 
@@ -37,12 +37,9 @@ omarchy plugin remove vitrin
   and out of the dock to remove it. Apps you haven't pinned sit in their own section: the
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
   keep it.
-- **App launcher**: The Apps icon, right after your file manager, shows all your apps on one
-  grid. Type to narrow it down, use the arrow keys and Enter, or click an app to open it;
-  right-click one to keep it in the dock. Esc or a click outside closes the grid. Omarchy's
-  Apps shortcut (Super+Alt+Space) and the Apps item in the Omarchy menu open it too. The
-  Apps icon moves like a pinned app; remove it by dragging it out or from its right-click
-  menu, and bring it back with "Show app launcher in Dock" in Dock Settings.
+- **App launcher**: Click the Apps icon to see all your apps on one screen, and start typing
+  to find one. Omarchy's Apps shortcut (Super+Alt+Space) opens it too. If you don't need the
+  icon, drag it out of the dock; you can bring it back in Dock Settings.
 - **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
   newest files in a stack, or middle-click it to open it in your file manager; the Trash
   always opens there. To add a shortcut, drag a folder onto the dock between the folders.
@@ -120,9 +117,8 @@ quickshell log -p "$OMARCHY_PATH/shell"
 
 ## Known limitations
 
-- Omarchy's Apps shortcut reaches Vitrin's grid because Vitrin answers in place of
-  Omarchy's dock while that's off. If a future Omarchy version changes how the shortcut
-  works, it may stop opening Vitrin's grid; the Apps icon keeps working.
+- A future Omarchy update could stop Omarchy's Apps shortcut from opening Vitrin's app
+  launcher. The Apps icon on the dock would still work.
 - After changing the icon theme, the dock shows the new icons once the shell restarts
   (`omarchy restart shell`, or log out and back in).
 - With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.

@@ -38,19 +38,53 @@ omarchy plugin remove vitrin
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
   keep it.
 - **App launcher**: Click the Apps icon to see all your apps on one screen, and start typing
-  to find one. Omarchy's Apps shortcut (Super+Alt+Space) opens it too. If you don't need the
+  to find one. Omarchy's Apps shortcut (Super + Alt + Space) opens it too. If you don't need the
   icon, drag it out of the dock; you can bring it back in Dock Settings.
 - **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
   newest files in a stack, or middle-click it to open it in your file manager; the Trash
   always opens there. To add a shortcut, drag a folder onto the dock between the folders.
   You can drag shortcuts to reorder them, or up and out of the dock to remove them.
-  Right-click a folder for its options.
+  Right-click a folder to see more options.
 - **Dividers**: Right-click a divider to turn hiding on or off, or to open Dock Settings.
   Drag a divider up or down to resize the dock.
 - **Dropping files and folders**: Drop files or folders on an app to open them with it, or
   on a folder (including Trash) to move them there. Anything on another drive is copied to
   the folder instead of being moved. Hold a drag over an open app's icon for a second to
   bring its window to the front.
+
+## Using the keyboard
+
+You can also use Vitrin with your keyboard. Plugins can't set keybindings, so you need to set up your own to access the keyboard mode. `Super + D` is used as an example below.
+
+To set a new binding, add this line to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + D", "Vitrin dock", "omarchy-shell vitrin focus")
+```
+
+Press `Super + D` (or whatever key you chose) to bring up the dock, even if it's hidden. Press the binding again, or Esc, to leave keyboard mode.
+Clicking another window leaves too.
+
+| Key | What it does |
+|---|---|
+| Arrow keys | Move between icons and menu items |
+| Home, End | Jump to the first or last icon |
+| Tab, Shift + Tab | Jump to the next or previous section on the dock |
+| Enter | Same as a left-click: opens apps and folders |
+| Shift + Enter | Same as a right-click: opens the selected icon's context menu |
+| Ctrl + Comma | Open Dock Settings |
+| Ctrl + H | Turn auto-hiding on or off. Turning it on leaves keyboard mode, so the dock can hide |
+| Esc | Leave keyboard mode |
+
+- **Menus**: Up and Down arrow keys move through the options, Enter picks one (or opens a submenu), and
+  Esc goes back one step. Move Left and Move Right options keep the menu open so you can keep moving
+  the icon.
+- **Folders**: Pressing Enter on a folder opens its stack. Arrow keys move through the files, Enter
+  opens the selected one, and Shift + Enter opens its context menu. Tab moves to "Open in Files". Esc goes
+  back one step, then closes the stack.
+- **Dock Settings**: Tab and Shift + Tab (or Up and Down arrows) move between the settings. Use Left and
+  Right arrow keys to change a slider, and Space or Enter to toggle a switch. Esc
+  closes it and returns to the dock.
 
 ## Settings and configuration
 
@@ -101,6 +135,11 @@ hl.layer_rule({ match = { namespace = "^vitrin$" }, blur = true, ignore_alpha = 
 **The dock doesn't show up.** If you're on Omarchy 4.5 or later and kept Omarchy's own
 dock when Vitrin asked, Vitrin turned itself off; see [Install](#install) to switch back.
 
+**The keyboard shortcut does nothing.** Run `omarchy-shell vitrin focus` in a terminal. If
+the dock responds, check your binding line and that no other binding uses the same keys
+(`omarchy menu keybindings --print` lists them all). If it doesn't, check that Vitrin is
+enabled with `omarchy plugin list`.
+
 **An app shows the wrong icon or name.** Some apps' windows don't identify themselves the
 way their desktop entry expects. The shell log names the window's ID; add it to `aliases`
 in the config file, pointing to the app's desktop entry ID:
@@ -120,6 +159,7 @@ quickshell log -p "$OMARCHY_PATH/shell"
 - A future Omarchy update could stop Omarchy's Apps shortcut from opening Vitrin's app
   launcher. The Apps icon on the dock would still work.
 - With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.
+- Keyboard mode has no equivalent of a middle-click. Every app's menu has New Window.
 - In full-screen games, the bottom edge can still bring up the dock, unless the game
   captures the pointer.
 

@@ -40,6 +40,12 @@ omarchy plugin remove vitrin
   and out of the dock to remove it. Apps you haven't pinned sit in their own section: the
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
   keep it.
+- **App launcher**: The Apps icon, right after your file manager, shows all your apps on one
+  grid. Type to narrow it down, use the arrow keys and Enter, or click an app to open it;
+  right-click one to keep it in the dock. Esc or a click outside closes the grid. Omarchy's
+  Apps shortcut (Super+Alt+Space) and the Apps item in the Omarchy menu open it too. The
+  Apps icon moves like a pinned app; remove it by dragging it out or from its right-click
+  menu, and bring it back with "Show app launcher in Dock" in Dock Settings.
 - **Folders**: Folder shortcuts sit on the right side of the dock. Click one to browse its
   newest files in a stack, or middle-click it to open it in your file manager (Files on
   Omarchy); the Trash always opens there. To add a shortcut, drag a folder onto the dock between the folders. You can drag
@@ -64,6 +70,7 @@ changes when you save the file.
 | `autoHide` | `true` | Hide the dock until the pointer reaches the bottom edge |
 | `hideDelay` | `500` | Milliseconds before it hides, 0 to 2000 |
 | `showRecent` | `true` | Show running and recent apps in their own section |
+| `showApps` | `true` | Show the app launcher's icon in the dock |
 | `dividerResize` | `true` | Resize the dock by dragging a divider |
 | `animateLaunch` | `true` | Bounce an icon while its app starts |
 
@@ -116,6 +123,9 @@ quickshell log -p "$OMARCHY_PATH/shell"
 
 ## Known limitations
 
+- Omarchy's Apps shortcut reaches Vitrin's grid because Vitrin answers in place of
+  Omarchy's dock while that's off. If a future Omarchy version changes how the shortcut
+  works, it may stop opening Vitrin's grid; the Apps icon keeps working.
 - After changing the icon theme, the dock shows the new icons once the shell restarts
   (`omarchy restart shell`, or log out and back in).
 - With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.

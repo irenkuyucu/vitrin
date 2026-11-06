@@ -44,6 +44,7 @@ Item {
   // Apps pick the first of their icon candidates that works (see "icon fallbacks").
   readonly property string iconUrl: isFolder ? dock.iconSource(dock.folderIconFor(item)) : dock.pickIcon(item.icons)
   readonly property bool letterIcon: iconUrl === dock.letterIcon
+  readonly property bool appsIcon: iconUrl === dock.appsIcon
   readonly property string slotUrl: dock.slotSourceFor(item, isFolder)
 
   // The artwork is scaled to look as big as the others ("size normalization" in Dock.qml)
@@ -178,7 +179,7 @@ Item {
     transform: Translate { id: bounce; y: 0 }
 
     Image {
-      visible: !button.showStack && !button.letterIcon
+      visible: !button.showStack && !button.letterIcon && !button.appsIcon
       anchors.fill: parent
       sourceSize.width: dock.iconSourceSize
       sourceSize.height: dock.iconSourceSize
@@ -192,6 +193,12 @@ Item {
       visible: button.letterIcon
       anchors.fill: parent
       name: button.label
+      size: button.drawSize
+    }
+
+    AppsIcon {
+      visible: button.appsIcon
+      anchors.fill: parent
       size: button.drawSize
     }
 
@@ -329,7 +336,10 @@ Item {
         suppressClick = false
         return
       }
-      if (m.button === Qt.RightButton) {
+      // The app launcher has no middle-click (its menu has Move and Remove only).
+      if (!button.isFolder && button.dock.isApps(button.item.key) && m.button === Qt.MiddleButton) {
+        return
+      } else if (m.button === Qt.RightButton) {
         button.window.openMenu(button, button.item, button.isFolder)
       } else if (button.missing) {
         button.window.folderClicked(button, button.item)

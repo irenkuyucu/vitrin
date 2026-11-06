@@ -37,7 +37,8 @@ Item {
     hideDelay: 500,        // ms after the pointer leaves before hiding, 0-2000
     animateLaunch: true,   // bounce icons while their app opens
     dividerResize: true,   // drag a divider up/down to resize the dock (like macOS)
-    showRecent: true       // a middle section with running and recently used apps (like macOS)
+    showRecent: true,      // a middle section with running and recently used apps (like macOS)
+    showApps: true         // the Apps icon (all apps on a grid), right after the file manager
   })
   property int iconSize: settingDefaults.iconSize
   property bool autoHide: settingDefaults.autoHide
@@ -45,6 +46,7 @@ Item {
   property bool animateLaunch: settingDefaults.animateLaunch
   property bool dividerResize: settingDefaults.dividerResize
   property bool showRecent: settingDefaults.showRecent
+  property bool showApps: settingDefaults.showApps
 
   // Look and feel. Shapes follow the GNOME/Adwaita conventions the Files app uses
   // (rounded surfaces, hairline borders, soft shadows); colors follow the Omarchy theme.
@@ -93,6 +95,18 @@ Item {
 
   function isFixed(key) {
     return key === root.fixedApp
+  }
+
+  // The app launcher's icon (see AppGrid.qml), saved among the pins under this key while
+  // it's shown. It starts right after the file manager and moves like a pinned app; it can
+  // be pulled out (or turned off in Dock Settings) like on macOS, since Omarchy's Apps
+  // shortcut still opens the grid. Turned back on, it returns after the file manager.
+  readonly property string appsKey: "vitrin.apps"
+  readonly property string appsIcon: "vitrin:apps"
+  function isApps(key) { return key === root.appsKey }
+  onShowAppsChanged: {
+    var normalized = normalizePins(root.pins)
+    if (JSON.stringify(normalized) !== JSON.stringify(root.pins)) root.pins = normalized
   }
 
   // Saved state (see config file)
@@ -216,7 +230,9 @@ Item {
       var key = root.effectiveAliases[p] || p
       if (out.indexOf(key) === -1) out.push(key)
     }
-    return [root.fixedApp].concat(out.filter(function(k) { return k !== root.fixedApp }))
+    var rest = out.filter(function(k) { return k !== root.fixedApp && (root.showApps || k !== root.appsKey) })
+    if (root.showApps && rest.indexOf(root.appsKey) === -1) rest.unshift(root.appsKey)
+    return [root.fixedApp].concat(rest)
   }
 
   onTerminalAppChanged: {
@@ -432,6 +448,7 @@ Item {
     root.animateLaunch = bool("animateLaunch")
     root.dividerResize = bool("dividerResize")
     root.showRecent = bool("showRecent")
+    root.showApps = bool("showApps")
     // Settings this version doesn't know (left from older versions) are dropped on save.
     for (var key in s) if (root.settingDefaults[key] === undefined) ok = false
     return ok
@@ -444,7 +461,8 @@ Item {
       hideDelay: root.hideDelay,
       animateLaunch: root.animateLaunch,
       dividerResize: root.dividerResize,
-      showRecent: root.showRecent
+      showRecent: root.showRecent,
+      showApps: root.showApps
     }
   }
 
@@ -671,7 +689,7 @@ Item {
     var fallback = Quickshell.iconPath("application-x-executable", true)
     if (!name) return fallback
     name = String(name)
-    if (name.indexOf("://") !== -1 || name === root.letterIcon) return name   // already resolved
+    if (name.indexOf("://") !== -1 || name === root.letterIcon || name === root.appsIcon) return name   // already resolved
     if (name.charAt(0) === "/") return Util.fileUrl(name)
     return Quickshell.iconPath(name, true) || fallback
   }
@@ -730,7 +748,7 @@ Item {
   // without an Image ever trying it and printing "Cannot open" to the shell log.
   function displayableIcon(url) {
     url = String(url || "")
-    if (url === root.letterIcon) return ""
+    if (url === root.letterIcon || url === root.appsIcon) return ""
     return url.indexOf("image://") === 0 || root.iconExtents[url] ? url : ""
   }
 
@@ -768,7 +786,11 @@ Item {
   // source url -> { l, r } (visible left/right edge as fractions of the icon's width),
   // or false when it couldn't be measured.
   // The letter tile (see LetterIcon.qml) is a rounded square 81% of the icon's width.
-  property var iconExtents: ({ "vitrin:letter": { l: 0.095, r: 0.905, L: 0.095, R: 0.905, t: 0.095, b: 0.905, hull: 0.6561 } })
+  // So is the Apps icon (see AppsIcon.qml).
+  property var iconExtents: ({
+    "vitrin:letter": { l: 0.095, r: 0.905, L: 0.095, R: 0.905, t: 0.095, b: 0.905, hull: 0.6561 },
+    "vitrin:apps": { l: 0.095, r: 0.905, L: 0.095, R: 0.905, t: 0.095, b: 0.905, hull: 0.6561 }
+  })
   property var measureQueue: []
 
   // The gaps and end spaces are set for 52 px icons (the default size) and scale in
@@ -1222,6 +1244,7 @@ Item {
   onLayoutChanged: syncIconModel()
 
   readonly property var items: root.layout.map(function(key) {
+    if (isApps(key)) return { key: key, entry: null, name: "Apps", icons: [root.appsIcon], pinned: true, windows: [] }
     var entry = DesktopEntries.byId(key) || entryFor(key)
     var windows = root.groups.byKey[key] || []
     return {
@@ -1250,6 +1273,7 @@ Item {
 
   // Click: launch if closed; focus if in the background; cycle if already focused.
   function activate(item, screen) {
+    if (isApps(item.key)) { appGrid.toggle(screen); return }
     var windows = item.windows
     if (windows.length === 0) {
       launch(item)
@@ -1882,6 +1906,7 @@ Item {
   // Remove from Dock. A pinned app that's running moves to the middle section's end.
   function unpin(key) {
     if (isFixed(key)) return
+    if (isApps(key)) { setSetting("showApps", false, true); return }
     root.pins = root.pins.filter(function(p) { return p !== key })
     saveConfig()
   }
@@ -1956,7 +1981,7 @@ Item {
     var arrange = []
     if (!isFixed(item.key)) {
       // Only pinned apps move (the middle section keeps its order). Position 0 belongs to
-      // Files, so the app right after it can't move left.
+      // the file manager, so the app right after it can't move left.
       var index = root.pins.indexOf(item.key)
       if (index > 1) arrange.push({ kind: "action", label: "Move Left", act: "left" })
       if (index !== -1 && index < root.pins.length - 1) arrange.push({ kind: "action", label: "Move Right", act: "right" })
@@ -2150,12 +2175,7 @@ Item {
   PanelWindow {
     id: dockChoiceDialog
     readonly property bool starting: root.dockChoice === "start"
-    screen: {
-      var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
-      var screens = Quickshell.screens
-      for (var i = 0; i < screens.length; i++) if (screens[i].name === name) return screens[i]
-      return screens.length > 0 ? screens[0] : null
-    }
+    screen: root.focusedScreen()
     visible: root.dockChoice !== "" && !root.dockChoiceMade
     anchors { top: true; bottom: true; left: true; right: true }
     color: Qt.rgba(0, 0, 0, 0.25)
@@ -2296,6 +2316,32 @@ Item {
         }
       }
     }
+  }
+
+  // ------------------------------------------------------------ apps grid
+  AppGrid {
+    id: appGrid
+    dock: root
+  }
+  onDockAllowedChanged: if (!root.dockAllowed) appGrid.close()
+
+  // Omarchy's Apps shortcut (Super+Alt+Space) and its menu's Apps item ask "omarchy.dock" to
+  // open its app grid. While Omarchy's dock is off, nothing else answers to that name, so
+  // Vitrin does, with its own grid (on the focused screen). When Vitrin is off, or Omarchy's
+  // dock is on, this stays quiet and Omarchy's grid answers as usual.
+  ShellIpc {
+    target: "omarchy.dock"
+    enabled: root.dockAllowed
+    function apps(): void { appGrid.toggle(root.focusedScreen()) }
+    // (Omarchy's workspace layout commands call this; Vitrin has nothing to refresh.)
+    function refresh(): void {}
+  }
+
+  function focusedScreen() {
+    var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) if (screens[i].name === name) return screens[i]
+    return screens.length > 0 ? screens[0] : null
   }
 
   // ------------------------------------------------------------ one dock per screen
@@ -2852,24 +2898,26 @@ Item {
         var from = win.dragFrom
         var pinnedCount = root.middleStart
         var fromMiddle = from >= pinnedCount
-        // Pinned positions it could land at: after Files, up to the end of the pinned apps.
+        // Pinned positions it could land at: after the file manager, up to the end of the
+        // pinned apps.
+        var first = 1
         var last = fromMiddle ? pinnedCount : pinnedCount - 1
         // Slots can differ in width, so try the dragged icon at each position among the
         // other pinned apps and pick the one whose middle is closest to the pointer.
-        var best = 1
+        var best = first
         var bestDistance = Infinity
         var left = 0
         var k = 0
         for (var i = 0; i < pinnedCount && k <= last; i++) {
           if (i === from) continue
-          if (k >= 1) {
+          if (k >= first) {
             var distance = Math.abs(rowX - (left + win.dragWidth / 2))
             if (distance < bestDistance) { bestDistance = distance; best = k }
           }
           left += root.slotWidthFor(root.pickIcon(root.items[i].icons), win.size)
           k++
         }
-        if (k <= last && k >= 1) {
+        if (k <= last && k >= first) {
           var end = Math.abs(rowX - (left + win.dragWidth / 2))
           if (end < bestDistance) { bestDistance = end; best = k }
         }
@@ -2882,10 +2930,10 @@ Item {
           for (var j = 0; j < from; j++) ownLeft += root.slotWidthFor(root.pickIcon(root.items[j].icons), win.size)
           var stay = Math.abs(rowX - (ownLeft + win.dragWidth / 2))
           win.dragToPinned = bestDistance < stay
-          win.dragTo = win.dragToPinned ? Math.max(1, Math.min(last, best)) : from
+          win.dragTo = win.dragToPinned ? Math.max(first, Math.min(last, best)) : from
           return
         }
-        win.dragTo = Math.max(1, Math.min(last, best))
+        win.dragTo = Math.max(first, Math.min(last, best))
       }
 
       // Where a dragged folder would land among the other folders (the Trash stays last).
@@ -3382,6 +3430,14 @@ Item {
           x: dragGhost.x
           y: dragGhost.y
           name: win.dragName
+          size: dragGhost.width
+          opacity: dragGhost.opacity
+        }
+
+        AppsIcon {
+          visible: dragGhost.visible && win.dragIcon === root.appsIcon
+          x: dragGhost.x
+          y: dragGhost.y
           size: dragGhost.width
           opacity: dragGhost.opacity
         }
@@ -3983,6 +4039,30 @@ Item {
               width: parent.width
               height: 13
               Rectangle { anchors.centerIn: parent; width: parent.width; height: 1; color: root.hairline }
+            }
+
+            // Show the Apps icon
+            Item {
+              width: parent.width
+              height: Math.max(appsLabel.implicitHeight, appsSwitch.implicitHeight)
+              Text {
+                id: appsLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - appsSwitch.width - 12
+                wrapMode: Text.WordWrap
+                text: "Show app launcher in Dock"
+                color: Commons.Color.popups.text
+                font.family: root.uiFont
+                font.pixelSize: root.uiFontSize
+              }
+              DockSwitch {
+                id: appsSwitch
+                dock: root
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.showApps
+                onToggled: function(on) { root.setSetting("showApps", on, true) }
+              }
             }
 
             // Show recent apps (the middle section)

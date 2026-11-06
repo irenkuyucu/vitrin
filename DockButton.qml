@@ -314,6 +314,7 @@ Item {
       pressY = m.y
       // A click that just closed a menu is used up by closing it (like macOS/GNOME),
       // so it doesn't also open or switch to this icon.
+      if (button.window.menuByKey) button.window.closeKeyMenu()   // a menu opened from the keyboard
       suppressClick = button.window.justClosedPopup()
     }
 

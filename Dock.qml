@@ -2769,6 +2769,12 @@ Item {
       // ---------------------------------------------------------- keyboard mode
       property bool keyMode: false
       property Item kbButton: null            // the highlighted icon
+      // A menu opened from keyboard mode: the dock keeps the keyboard and handles the menu's
+      // keys itself (the menu's own focus grab would take the keyboard from the dock).
+      property bool menuByKey: false
+      property var menuKeyRow: null           // the highlighted row
+      property string menuKeyKey: ""          // and its rowKey (the menu's Repeater hands out copies of rows)
+      property string menuReturnKey: ""       // the submenu row we came from: highlighted again on the way back
 
       // The icons in order, left to right (leaving ones skipped).
       function keyButtons() {
@@ -2815,6 +2821,7 @@ Item {
 
       function exitKeyMode() {
         if (!win.keyMode) return
+        if (win.menuByKey) win.closeMenu()
         win.keyMode = false
         win.keyHeld = false
         win.keyPrepared = false
@@ -2822,6 +2829,109 @@ Item {
         win.tipTarget = null      // hides the label as it is (clearing its text first made it jump)
         Quickshell.execDetached(["bash", root.script("keep-cursor.sh"), "restore"])
         hideTimer.restart()
+      }
+
+      // ---- menus by keyboard
+      // The rows that can be chosen, in the order they're drawn (window rows first).
+      function keyMenuRows() {
+        var chooseable = function(r) { return r.kind !== "separator" && r.kind !== "text" && !r.disabled }
+        var windows = win.menuList.filter(function(r) { return r.kind === "window" && chooseable(r) })
+        var others = win.menuList.filter(function(r) { return r.kind !== "window" && chooseable(r) })
+        return windows.concat(others)
+      }
+
+      // What identifies a row (two rows of one menu never look alike, except windows with the same title).
+      function rowKey(r) {
+        return [r.kind, r.label || "", r.act || "", r.page || "", r.key || "", r.value || ""].join("|")
+      }
+      function keyMenuIndex(rows) {
+        for (var i = 0; i < rows.length; i++) if (win.rowKey(rows[i]) === win.menuKeyKey) return i
+        return -1
+      }
+
+      function keyMenuSelect(row) {
+        win.menuKeyRow = row
+        win.menuKeyKey = row ? win.rowKey(row) : ""
+        // Keep a window row in view when the window list scrolls.
+        if (row && row.kind === "window") {
+          var at = menuColumn.windowRows.indexOf(row)
+          if (at !== -1) {
+            var top = at * 32
+            if (top < windowList.contentY) windowList.contentY = top
+            else if (top + 32 > windowList.contentY + windowList.height) windowList.contentY = top + 32 - windowList.height
+          }
+        }
+      }
+
+      // A new page of rows: highlight the row we came back from, else the first real choice
+      // (not the "back" row, which Esc is for).
+      onMenuListChanged: if (win.menuByKey) {
+        var rows = win.keyMenuRows()
+        var pick = null
+        if (win.menuReturnKey !== "") {
+          for (var i = 0; i < rows.length && !pick; i++) if (win.rowKey(rows[i]) === win.menuReturnKey) pick = rows[i]
+          if (pick) win.menuReturnKey = ""      // (the page we're going into doesn't have it: keep it for the way back)
+        }
+        for (var j = 0; j < rows.length && !pick; j++) if (rows[j].kind !== "back") pick = rows[j]
+        win.keyMenuSelect(pick || (rows.length > 0 ? rows[0] : null))
+      }
+
+      // Shift+Enter, the Menu key or Shift+F10 on the highlighted icon.
+      function keyOpenMenu() {
+        var button = win.kbButton
+        if (!button) return
+        win.openMenu(button, button.item, button.isFolder)
+        win.menuByKey = true
+        var rows = win.keyMenuRows()
+        win.keyMenuSelect(rows.length > 0 ? rows[0] : null)
+      }
+
+      function keyMenuMove(delta) {
+        var rows = win.keyMenuRows()
+        if (rows.length === 0) return
+        var at = win.keyMenuIndex(rows)
+        win.keyMenuSelect(rows[(at === -1 ? (delta > 0 ? 0 : rows.length - 1) : at + delta + rows.length) % rows.length])
+      }
+
+      function keyMenuEdge(last) {
+        var rows = win.keyMenuRows()
+        if (rows.length > 0) win.keyMenuSelect(rows[last ? rows.length - 1 : 0])
+      }
+
+      // The keys of an open menu, whichever way it was opened (a keyboard-opened one gets them
+      // through keyCatcher; a mouse-opened one through the menu's own window, which is where
+      // the keyboard goes while the menu's focus grab is on). Returns whether the key was used.
+      function menuKey(event) {
+        switch (event.key) {
+        case Qt.Key_Up: win.keyMenuMove(-1); return true
+        case Qt.Key_Down: win.keyMenuMove(1); return true
+        case Qt.Key_Home: win.keyMenuEdge(false); return true
+        case Qt.Key_End: win.keyMenuEdge(true); return true
+        case Qt.Key_Return: case Qt.Key_Enter:
+          if (win.menuKeyRow) win.handleMenuRow(win.menuKeyRow)
+          return true
+        case Qt.Key_Escape: win.keyMenuBack(); return true
+        }
+        return false
+      }
+
+      // Esc: back one level (submenu -> menu, "empty the Trash?" -> menu, menu -> the dock).
+      function keyMenuBack() {
+        var back = win.menuList.filter(function(r) { return r.kind === "back" })
+        if (back.length > 0) { win.handleMenuRow(back[0]); return }
+        if (win.menuConfirming) {
+          win.menuConfirming = false
+          win.menuList = root.menuRows(win.menuItem, win.menuIsFolder)
+          return
+        }
+        win.closeKeyMenu()
+      }
+
+      // Back to the dock's keyboard mode, with the same icon highlighted (also used when an icon
+      // is clicked while the menu is open: that click is used up by closing the menu).
+      function closeKeyMenu() {
+        win.closeMenu(true)
+        if (win.keyMode && win.kbButton) win.showTip(win.kbButton, win.kbButton.label, true)
       }
 
       function keySelect(button) {
@@ -2881,6 +2991,10 @@ Item {
         Keys.onPressed: function(event) {
           if (!win.keyMode) return
           event.accepted = true
+          if (win.menuByKey) {
+            event.accepted = win.menuKey(event)
+            return
+          }
           switch (event.key) {
           case Qt.Key_Left: case Qt.Key_Up: win.keyMove(-1); break
           case Qt.Key_Right: case Qt.Key_Down: win.keyMove(1); break
@@ -2889,7 +3003,15 @@ Item {
           // (Shift+Tab arrives as Backtab, or as Tab with Shift held, depending on the keyboard.)
           case Qt.Key_Tab: win.keySection_step(event.modifiers & Qt.ShiftModifier ? -1 : 1); break
           case Qt.Key_Backtab: win.keySection_step(-1); break
-          case Qt.Key_Return: case Qt.Key_Enter: win.keyActivate(); break
+          case Qt.Key_Return: case Qt.Key_Enter:
+            if (event.modifiers & Qt.ShiftModifier) win.keyOpenMenu()
+            else win.keyActivate()
+            break
+          case Qt.Key_Menu: win.keyOpenMenu(); break
+          case Qt.Key_F10:
+            if (event.modifiers & Qt.ShiftModifier) win.keyOpenMenu()
+            else event.accepted = false
+            break
           case Qt.Key_Escape: win.exitKeyMode(); break
           default: event.accepted = false
           }
@@ -3013,6 +3135,7 @@ Item {
       function handleMenuRow(row) {
         if (row.disabled || row.kind === "text" || row.kind === "separator") return
         if (row.kind === "submenu") {
+          win.menuReturnKey = win.rowKey(row)
           win.setMenuPage(root.folderSubmenuRows(win.menuItem, row.page), 1)
           return
         }
@@ -3023,6 +3146,7 @@ Item {
         if (row.kind === "choice") {
           var folder = win.menuItem
           win.closeMenu()
+          win.exitKeyMode()
           root.setFolderOption(folder.path, row.key, row.value)
           return
         }
@@ -3033,12 +3157,46 @@ Item {
         }
         if (row.act === "settings") {
           win.closeMenu()
+          win.exitKeyMode()
           win.openSettings()
           return
         }
+        // Moving an icon left or right keeps the menu open, to move it on.
+        if (row.act === "left" || row.act === "right" || row.act === "folder-left" || row.act === "folder-right") {
+          root.runRow(row, win.menuItem, win.screen)
+          Qt.callLater(function() { win.refreshMoveMenu(row) })
+          return
+        }
         var item = win.menuItem
+        var byKey = win.menuByKey
         win.closeMenu()
+        // From keyboard mode, "Cancel" goes back to the dock; anything else is done and ends it.
+        if (row.act === "cancel" && byKey) { if (win.kbButton) win.showTip(win.kbButton, win.kbButton.label, true); return }
+        win.exitKeyMode()
         if (row.act !== "cancel") root.runRow(row, item, win.screen)
+      }
+
+      // After a move: rebuild the open menu (an end of the dock has no further move one way),
+      // keep the highlight on the same row or, if it's gone, on the opposite move, and bring the
+      // menu along with the icon, which slides to its new place.
+      function refreshMoveMenu(movedRow) {
+        if (!win.menuOpen || !win.menuItem) return
+        if (!win.menuIsFolder && root.itemsByKey[win.menuItem.key]) win.menuItem = root.itemsByKey[win.menuItem.key]
+        win.menuList = root.menuRows(win.menuItem, win.menuIsFolder)
+        if (win.menuByKey || win.menuKeyKey !== "") {
+          var rows = win.keyMenuRows()
+          var opposite = { "left": "right", "right": "left", "folder-left": "folder-right", "folder-right": "folder-left" }[movedRow.act]
+          var target = null
+          for (var i = 0; i < rows.length && !target; i++) if (win.rowKey(rows[i]) === win.rowKey(movedRow)) target = rows[i]
+          for (var j = 0; j < rows.length && !target; j++) if (rows[j].act === opposite) target = rows[j]
+          if (target) win.keyMenuSelect(target)
+        }
+        menuReanchor.restart()
+      }
+      Timer {
+        id: menuReanchor
+        interval: 280
+        onTriggered: if (win.menuOpen) menu.anchor.updateAnchor()
       }
 
       // Trash count arrives asynchronously; refresh the open Trash menu when it does.
@@ -3308,6 +3466,10 @@ Item {
       function closeMenu(byOutsideClick) {
         if (win.menuOpen && byOutsideClick) win.popupClosedAt = Date.now()
         win.menuOpen = false
+        win.menuByKey = false
+        win.menuKeyRow = null
+        win.menuKeyKey = ""
+        win.menuReturnKey = ""
         hideTimer.restart()
       }
 
@@ -3897,6 +4059,16 @@ Item {
         implicitWidth: menuCard.width + root.shadowPad * 2
         implicitHeight: menuCard.height + root.shadowPad * 2
 
+
+        // Keys for a menu opened with the mouse (see menuKey).
+        Item {
+          focus: true
+          Keys.onPressed: function(event) {
+            if (win.menuByKey || !win.menuOpen) { event.accepted = false; return }
+            event.accepted = win.menuKey(event)
+          }
+        }
+
         Rectangle {
           id: menuCard
           x: root.shadowPad
@@ -4019,7 +4191,7 @@ Item {
                   visible: menuRow.interactive
                   anchors.fill: parent
                   color: rowMouse.pressed ? Util.alpha(root.foreground, 0.16)
-                       : rowMouse.containsMouse ? root.rowHover
+                       : (rowMouse.containsMouse || (win.menuKeyKey !== "" && win.rowKey(menuRow.modelData) === win.menuKeyKey)) ? root.rowHover
                        : "transparent"
                   radius: root.rowRadius
                 }
@@ -4072,6 +4244,8 @@ Item {
                   enabled: menuRow.interactive
                   anchors.fill: parent
                   hoverEnabled: true
+                  // In a keyboard-opened menu the pointer moves the one highlight too.
+                  onEntered: if (menuRow.interactive && (win.menuByKey || win.menuKeyKey !== "")) win.keyMenuSelect(menuRow.modelData)
                   onClicked: win.handleMenuRow(menuRow.modelData)
                 }
               }
@@ -4098,7 +4272,7 @@ Item {
 
       // Any click outside the menu closes it, including on the dock itself.
       HyprlandFocusGrab {
-        active: win.menuOpen
+        active: win.menuOpen && !win.menuByKey
         windows: [menu]
         onCleared: win.closeMenu(true)
       }

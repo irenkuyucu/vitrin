@@ -119,8 +119,6 @@ quickshell log -p "$OMARCHY_PATH/shell"
 
 - A future Omarchy update could stop Omarchy's Apps shortcut from opening Vitrin's app
   launcher. The Apps icon on the dock would still work.
-- After changing the icon theme, the dock shows the new icons once the shell restarts
-  (`omarchy restart shell`, or log out and back in).
 - With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.
 - In full-screen games, the bottom edge can still bring up the dock, unless the game
   captures the pointer.

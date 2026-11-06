@@ -686,12 +686,83 @@ Item {
   }
 
   function iconSource(name) {
-    var fallback = Quickshell.iconPath("application-x-executable", true)
+    var fallback = themeIcon("application-x-executable")
     if (!name) return fallback
     name = String(name)
     if (name.indexOf("://") !== -1 || name === root.letterIcon || name === root.appsIcon) return name   // already resolved
     if (name.charAt(0) === "/") return Util.fileUrl(name)
-    return Quickshell.iconPath(name, true) || fallback
+    return themeIcon(name) || fallback
+  }
+
+  // ------------------------------------------------------------ icon theme
+  // Qt reads the icon theme once, when the shell starts, but Omarchy changes it with every
+  // theme switch. So the dock finds icons itself (scripts/icon-lookup.py, which follows the
+  // freedesktop icon theme spec and keeps running) and watches the icon theme setting: on a
+  // change, every icon in use is looked up again and swaps over. Until an icon's first
+  // answer arrives (right after startup), Qt's own lookup stands in.
+  property var themeIcons: ({})          // icon name -> file URL, "" when no theme has it
+  property var iconsWanted: ({})         // names asked for, not answered yet (changed in place)
+  property var iconAnswers: ({})         // the batch being answered (changed in place)
+  property string iconTheme: ""
+
+  function themeIcon(name) {
+    var url = root.themeIcons[name]
+    if (url !== undefined) return url
+    if (!root.iconsWanted[name]) {
+      root.iconsWanted[name] = true
+      Qt.callLater(root.askForIcons)
+    }
+    return Quickshell.iconPath(name, true)
+  }
+
+  function askForIcons() {
+    var names = Object.keys(root.iconsWanted)
+    if (names.length === 0 || !iconLookup.running) return
+    root.iconsWanted = ({})
+    iconLookup.write(names.join("\n") + "\n@flush\n")
+  }
+
+  Process {
+    id: iconLookup
+    running: true
+    stdinEnabled: true
+    command: ["python3", "-I", root.script("icon-lookup.py")]
+    onRunningChanged: if (running) Qt.callLater(root.askForIcons)
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (line === "@done") {
+          root.themeIcons = Object.assign({}, root.themeIcons, root.iconAnswers)
+          root.iconAnswers = ({})
+          return
+        }
+        var tab = line.indexOf("\t")
+        if (tab <= 0) return
+        var path = line.slice(tab + 1)
+        root.iconAnswers[line.slice(0, tab)] = path ? Util.fileUrl(path) : ""
+      }
+    }
+  }
+
+  // Prints "icon-theme: '<name>'" whenever the setting changes.
+  Process {
+    running: true
+    command: ["gsettings", "monitor", "org.gnome.desktop.interface", "icon-theme"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var m = String(line).match(/icon-theme:\s*'([^']*)'/)
+        if (m) root.useIconTheme(m[1])
+      }
+    }
+  }
+
+  function useIconTheme(name) {
+    if (!name || name === root.iconTheme) return
+    root.iconTheme = name
+    root.mimeIconCache = ({})               // which names a theme has can differ
+    var names = Object.keys(root.themeIcons).concat(Object.keys(root.iconsWanted))
+    root.iconsWanted = ({})
+    if (!iconLookup.running) return
+    iconLookup.write("@theme " + name + "\n" + (names.length ? names.join("\n") + "\n" : "") + "@flush\n")
   }
 
   // ------------------------------------------------------------ icon fallbacks
@@ -728,11 +799,11 @@ Item {
     for (var n = 0; n < names.length; n++) {
       if (!names[n]) continue
       if (names[n].charAt(0) === "/") add(Util.fileUrl(names[n]))
-      else add(Quickshell.iconPath(names[n], true))
+      else add(themeIcon(names[n]))
     }
     // Pixmaps only for the entry's own names, and only when the theme lacks them.
     for (var m = 0; m < pixmapNames.length; m++) {
-      if (!pixmapNames[m] || Quickshell.iconPath(pixmapNames[m], true)) continue
+      if (!pixmapNames[m] || themeIcon(pixmapNames[m])) continue
       add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".png")
       add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".svg")
       add("file:///usr/share/pixmaps/" + pixmapNames[m] + ".xpm")
@@ -1407,7 +1478,7 @@ Item {
     var icon = String(folder.icon || "")
     if (!isTrash(folder) || root.trashCount === 0) return icon
     if (folder.iconFull) return String(folder.iconFull)
-    if (icon && icon.charAt(0) !== "/" && Quickshell.iconPath(icon + "-full", true)) return icon + "-full"
+    if (icon && icon.charAt(0) !== "/" && themeIcon(icon + "-full")) return icon + "-full"
     return icon
   }
 
@@ -1470,7 +1541,7 @@ Item {
   function folderIconFromGio(icons) {
     for (var i = 0; i < icons.length; i++) {
       if (icons[i].indexOf("inode-directory") === 0) continue
-      if (Quickshell.iconPath(icons[i], true)) return icons[i]
+      if (themeIcon(icons[i])) return icons[i]
     }
     return "folder"
   }
@@ -1819,7 +1890,7 @@ Item {
     var found = ""
     var names = String(icons || "").split(",")
     for (var i = 0; i < names.length && !found; i++) {
-      if (names[i] && names[i].indexOf("-symbolic") === -1 && Quickshell.iconPath(names[i], true)) found = names[i]
+      if (names[i] && names[i].indexOf("-symbolic") === -1 && themeIcon(names[i])) found = names[i]
     }
     if (!found) found = findMimeIcon(mime)
     root.mimeIconCache[cacheKey] = found
@@ -1833,7 +1904,7 @@ Item {
                       /zip|tar|compressed|archive|rar|7z/.test(mime) ? "package-x-generic" : null,
                       "text-x-generic"]
     for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i] && Quickshell.iconPath(candidates[i], true)) return candidates[i]
+      if (candidates[i] && themeIcon(candidates[i])) return candidates[i]
     }
     return "text-x-generic"
   }

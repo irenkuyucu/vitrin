@@ -9,7 +9,8 @@ theme and runs inside the Quickshell session.
 ## Install
 
 Requires Omarchy 4 on Hyprland. Vitrin was developed on Omarchy 4.0.6 and 4.5 with
-Quickshell 0.3.2.
+Quickshell 0.3.2. It doesn't need anything beyond a regular Omarchy install: its helper
+scripts use ImageMagick, `inotify-tools`, Python 3 and `gio`, which Omarchy already includes.
 
 ```bash
 omarchy plugin add https://github.com/irenkuyucu/vitrin.git --enable
@@ -31,12 +32,15 @@ omarchy plugin remove vitrin
 
 ## Using the dock
 
-- **Apps**: Click an app icon on the dock to open it, switch to it, or cycle through its
-  open windows. Middle-click opens a new window; right-click lists its windows and options.
+- **Apps**: Click an app icon on the dock to launch the app or switch to the window you used last. If an app has windows open in multiple workspaces, those on your current workspace come first. Clicking the icon again moves on to the next window, including minimized and hidden ones. Middle-click on an icon opens a new window; right-click lists
+  its windows and options.
   You can pin apps to keep them in the dock, and drag icons to reorder them, or drag one up
   and out of the dock to remove it. Apps you haven't pinned sit in their own section: the
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
   keep it.
+- **Window management**: Right-click an app to see its windows. A check mark shows the one you used last.
+  Minimized and hidden windows are marked with a diamond, clicking on one will bring it back to the workspace you're on.
+  Windows can only be minimized on floating workspaces.
 - **App launcher**: Click the Apps icon to see all your apps on one screen, and start typing
   to find one. Omarchy's Apps shortcut (Super + Alt + Space) opens it too. If you don't need the
   icon, drag it out of the dock; you can bring it back in Dock Settings.
@@ -69,6 +73,7 @@ Clicking another window leaves too.
 |---|---|
 | Arrow keys | Move between icons and menu items |
 | Home, End | Jump to the first or last icon |
+| Letters | Jump to the next icon whose name starts with what you type |
 | Tab, Shift + Tab | Jump to the next or previous section on the dock |
 | Enter | Same as a left-click: opens apps and folders |
 | Shift + Enter | Same as a right-click: opens the selected icon's context menu |
@@ -130,6 +135,18 @@ o.window(".*", { no_blur = true })
 hl.layer_rule({ match = { namespace = "^vitrin$" }, blur = true, ignore_alpha = 0.3 })
 ```
 
+## Changes to your Hyprland settings
+
+Vitrin never edits your config files. It does adjust a few Hyprland settings on the fly,
+and puts each one back when it's done:
+
+- **Keyboard mode** keeps the pointer visible while you type, and stops hovering over a
+  window from giving it the keyboard. Both go back to normal when you leave keyboard mode.
+- **Switching to a window from the dock** keeps the pointer where it is, instead of jumping
+  to the window. This goes back to normal right after the switch.
+
+If the shell stops halfway, Vitrin puts everything back the next time it starts.
+
 ## Troubleshooting
 
 **The dock doesn't show up.** If you're on Omarchy 4.5 or later and kept Omarchy's own
@@ -159,7 +176,6 @@ quickshell log -p "$OMARCHY_PATH/shell"
 - A future Omarchy update could stop Omarchy's Apps shortcut from opening Vitrin's app
   launcher. The Apps icon on the dock would still work.
 - With hiding off, Omarchy's volume and brightness pop-up overlaps the top of the dock.
-- Keyboard mode has no equivalent of a middle-click. Every app's menu has New Window.
 - In full-screen games, the bottom edge can still bring up the dock, unless the game
   captures the pointer.
 

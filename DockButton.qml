@@ -31,6 +31,8 @@ Item {
   onIsLeavingChanged: if (isLeaving) { appearAnimation.stop(); appearAnimation.to = 0; appearAnimation.start() }
 
   readonly property bool running: !isFolder && item.windows.length > 0
+  // Every window of the app is hidden (minimized or in the scratchpad): the running dot is hollow.
+  readonly property bool allHidden: running && item.windows.every(function(w) { return dock.isHidden(w) })
   readonly property bool missing: isFolder && dock.isMissing(item)
   // Holding a drag over it brings it forward (see springTimer): running apps, and Files
   // even when it isn't running.
@@ -286,7 +288,9 @@ Item {
     anchors.horizontalCenterOffset: button.contentLeft / 2    // under the icon, not the divider
     anchors.bottom: parent.bottom
     anchors.bottomMargin: 0
-    color: Util.alpha(dock.foreground, 0.8)
+    color: button.allHidden ? "transparent" : Util.alpha(dock.foreground, 0.8)
+    border.width: button.allHidden ? 1 : 0
+    border.color: Util.alpha(dock.foreground, 0.8)
   }
 
   MouseArea {

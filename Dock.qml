@@ -1039,6 +1039,189 @@ Item {
     return ""
   }
 
+  // ------------------------------------------------------------ hidden windows
+  // A window parked on a special workspace is hidden: Omarchy's minimize (Super+M) uses
+  // "special:minimized", the scratchpad (Super+Alt+S) "special:scratchpad". Only a dock brings a
+  // minimized window back. A special workspace that is on screen (the scratchpad toggled on) shows
+  // its windows, so they count as visible. A click on a hidden window's icon or menu row restores
+  // it to the workspace in front of the user.
+  property var hiddenAddresses: ({})             // Hyprland window address -> true
+  property var shownSpecials: ({})               // monitor name -> the special workspace it shows ("" for none)
+  property var lastActive: ({})                  // window address -> when it was last focused (higher = later)
+  property int activeCounter: 0
+
+  function windowKey(address) { return String(address || "").replace(/^0x/, "") }
+
+  function hyprToplevelFor(toplevel) {
+    var hypr = Hyprland.toplevels.values
+    for (var i = 0; i < hypr.length; i++) if (hypr[i].wayland === toplevel) return hypr[i]
+    return null
+  }
+
+  function refreshHidden() {
+    var hypr = Hyprland.toplevels.values
+    var shown = {}
+    for (var m in root.shownSpecials) if (root.shownSpecials[m] !== "") shown[root.shownSpecials[m]] = true
+    var map = {}
+    for (var i = 0; i < hypr.length; i++) {
+      var w = hypr[i].workspace
+      var name = w ? String(w.name) : ""
+      if (name.indexOf("special:") === 0 && !shown[name]) map[root.windowKey(hypr[i].address)] = true
+    }
+    if (JSON.stringify(map) !== JSON.stringify(root.hiddenAddresses)) root.hiddenAddresses = map
+  }
+
+  function isHidden(toplevel) {
+    return !!root.hiddenAddresses[root.windowKey(root.hyprAddressFor(toplevel))]
+  }
+
+  // Which special workspaces are on screen, and (once, at the start) when each window was last
+  // focused: Hyprland's own focus history, as the first (oldest) entries of lastActive.
+  Process {
+    id: hyprState
+    command: ["bash", "-c", "printf '{\"monitors\":'; hyprctl monitors -j; printf ',\"clients\":'; hyprctl clients -j; printf '}'"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var state = null
+        try { state = JSON.parse(String(text)) } catch (e) { return }
+        var monitors = state.monitors || []
+        var clients = state.clients || []
+        var shown = {}
+        for (var i = 0; i < monitors.length; i++)
+          shown[monitors[i].name] = monitors[i].specialWorkspace ? String(monitors[i].specialWorkspace.name || "") : ""
+        root.shownSpecials = shown
+        for (var j = 0; j < clients.length; j++) {
+          var key = root.windowKey(clients[j].address)
+          // (negative: before anything focused since the dock started)
+          if (root.lastActive[key] === undefined) root.lastActive[key] = -(1 + clients[j].focusHistoryID)
+        }
+        root.refreshHidden()
+      }
+    }
+  }
+  function refreshHyprState() { if (!hyprState.running) hyprState.running = true }
+
+  Timer { id: hiddenRefresh; interval: 120; onTriggered: root.refreshHidden() }
+  Timer { id: stateRefresh; interval: 120; onTriggered: root.refreshHyprState() }
+  // Hyprland lists its windows a moment after the shell starts, and again as they come and go.
+  Connections {
+    target: Hyprland.toplevels
+    function onValuesChanged() { hiddenRefresh.restart() }
+  }
+  Timer {
+    interval: 1500
+    running: true
+    onTriggered: root.refreshHyprState()
+  }
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      var n = event.name
+      if (n === "movewindowv2" || n === "openwindow" || n === "closewindow" || n === "movewindow") hiddenRefresh.restart()
+      else if (n === "activespecial" || n === "activespecialv2" || n === "focusedmon" || n === "monitoraddedv2") stateRefresh.restart()
+    }
+  }
+
+  // Remember when each window was last the active one (a window Hyprland hasn't told us about
+  // yet is tried once more a moment later).
+  property var pendingActive: null
+  function noteActive(toplevel) {
+    var key = root.windowKey(root.hyprAddressFor(toplevel))
+    if (key === "") {
+      if (root.pendingActive !== toplevel) { root.pendingActive = toplevel; pendingActiveTimer.restart() }
+      return
+    }
+    root.lastActive[key] = ++root.activeCounter
+  }
+  Timer {
+    id: pendingActiveTimer
+    interval: 200
+    onTriggered: {
+      var t = root.pendingActive
+      root.pendingActive = null
+      if (t && ToplevelManager.activeToplevel === t) {
+        var key = root.windowKey(root.hyprAddressFor(t))
+        if (key !== "") root.lastActive[key] = ++root.activeCounter
+      }
+    }
+  }
+  Connections {
+    target: ToplevelManager
+    function onActiveToplevelChanged() {
+      var t = ToplevelManager.activeToplevel
+      if (t) root.noteActive(t)
+    }
+  }
+
+  function recency(toplevel) {
+    var v = root.lastActive[root.windowKey(root.hyprAddressFor(toplevel))]
+    return v === undefined ? -1e9 : v
+  }
+
+  // The window an app was last in, or null when none is known.
+  function lastUsedWindow(windows) {
+    var best = null
+    var bestValue = -1e9
+    for (var i = 0; i < windows.length; i++) {
+      var v = root.recency(windows[i])
+      if (v > bestValue) { best = windows[i]; bestValue = v }
+    }
+    return best
+  }
+
+  // 0: visible on the workspace in front of the user, 1: visible elsewhere, 2: hidden.
+  function windowGroup(toplevel) {
+    if (root.isHidden(toplevel)) return 2
+    var h = root.hyprToplevelFor(toplevel)
+    var monitor = Hyprland.focusedMonitor
+    if (!h || !h.workspace || !monitor) return 1
+    var here = monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    if (h.workspace.id === here) return 0
+    return root.shownSpecials[monitor.name] === String(h.workspace.name) ? 0 : 1    // (a scratchpad that is up counts as here)
+  }
+
+  // An app's windows in the order of its menu and of repeated clicks: the groups above, each in
+  // the order the windows opened.
+  function windowsInOrder(windows) {
+    var list = []
+    for (var i = 0; i < windows.length; i++) list.push({ w: windows[i], group: root.windowGroup(windows[i]), index: i })
+    list.sort(function(a, b) { return a.group - b.group || a.index - b.index })
+    return list.map(function(e) { return e.w })
+  }
+
+  // A hidden window first comes back to the workspace in front of the user, then is focused like
+  // any other. The pointer stays where it is: Hyprland's warping is off around both steps.
+  Process {
+    id: restoreProcess
+    property var toplevel: null
+    onExited: {
+      var t = restoreProcess.toplevel
+      restoreProcess.toplevel = null
+      if (!t) return
+      t.activate()
+      root.warpRestoreTarget = t
+      warpRestoreTimer.interval = 300
+      warpRestoreTimer.restart()
+    }
+  }
+
+  function bringForward(toplevel, screen) {
+    if (!root.isHidden(toplevel)) { root.focusWindow(toplevel, screen); return }
+    var monitor = Hyprland.focusedMonitor
+    var workspace = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    var address = root.hyprAddressFor(toplevel)
+    if (!(workspace >= 1) || address === "" || restoreProcess.running) { root.focusWindow(toplevel, screen); return }
+    if (address.indexOf("0x") !== 0) address = "0x" + address
+    restoreProcess.toplevel = toplevel
+    restoreProcess.command = ["bash", "-c", "hyprctl dispatch \"$1\"", "vitrin",
+      "hl.dsp.window.move({ workspace = \"" + workspace + "\", window = \"address:" + address + "\" })"]
+    var start = function() { restoreProcess.running = true }
+    if (warpSwitch.running) { start(); return }
+    warpSwitch.then = start
+    warpSwitch.command = ["bash", root.script("no-warp.sh"), "off"]
+    warpSwitch.running = true
+  }
+
   // The entry id a window under a shared id belongs to; null while not known yet, "" if none.
   function sharedKeyFor(toplevel) {
     var address = hyprAddressFor(toplevel)
@@ -1350,11 +1533,35 @@ Item {
       launch(item)
       return
     }
-    var focused = -1
-    for (var i = 0; i < windows.length; i++) {
-      if (windows[i].activated) focused = i
+    // A click on an app that isn't focused goes to the window it was last in, from the first of these
+    // groups that has one: visible on the workspace in front of the user, visible elsewhere, hidden.
+    // A click while one of its windows is focused moves on through a fixed order (visible windows by
+    // workspace, then hidden ones), which doesn't change as the workspace does, so repeated clicks
+    // visit every window, hidden ones last.
+    var ordered = windowsInOrder(windows)
+    var focusedAt = -1
+    for (var i = 0; i < windows.length; i++) if (windows[i].activated && !isHidden(windows[i])) focusedAt = i
+    var pick = null
+    if (focusedAt !== -1) {
+      var cycle = []
+      for (var c = 0; c < windows.length; c++) {
+        var h = hyprToplevelFor(windows[c])
+        cycle.push({ w: windows[c], hidden: isHidden(windows[c]) ? 1 : 0, ws: h && h.workspace ? h.workspace.id : 0, index: c })
+      }
+      cycle.sort(function(a, b) { return a.hidden - b.hidden || a.ws - b.ws || a.index - b.index })
+      var at = 0
+      for (var k = 0; k < cycle.length; k++) if (cycle[k].w === windows[focusedAt]) at = k
+      pick = cycle[(at + 1) % cycle.length].w
+    } else {
+      pick = ordered[0]
+      var group = windowGroup(pick)
+      var best = recency(pick)
+      for (var j = 1; j < ordered.length && windowGroup(ordered[j]) === group; j++) {
+        var v = recency(ordered[j])
+        if (v > best) { pick = ordered[j]; best = v }
+      }
     }
-    focusWindow(windows[focused === -1 ? 0 : (focused + 1) % windows.length], screen)
+    bringForward(pick, screen)
   }
 
   // ------------------------------------------------------------ keeping the pointer
@@ -1414,6 +1621,7 @@ Item {
   }
   // In case the shell stopped while warping was off.
   Component.onCompleted: {
+    root.refreshHyprState()
     Quickshell.execDetached(["bash", root.script("no-warp.sh"), "restore"])
     Quickshell.execDetached(["bash", root.script("keep-cursor.sh"), "restore"])
   }
@@ -2044,10 +2252,15 @@ Item {
     }
 
     // Its windows; opening (New Window and the app's own actions); arranging; Quit.
+    // (The check marks the window the app was last in, unless it is hidden; hidden ones get a
+    // diamond. The order is the one a click follows.)
     var windows = []
-    for (var i = 0; i < item.windows.length; i++) {
-      var w = item.windows[i]
-      windows.push({ kind: "window", label: windowLabel(w), toplevel: w, current: w.activated })
+    var ordered = windowsInOrder(item.windows)
+    var lead = lastUsedWindow(item.windows)
+    for (var i = 0; i < ordered.length; i++) {
+      var w = ordered[i]
+      var hidden = isHidden(w)
+      windows.push({ kind: "window", label: windowLabel(w), toplevel: w, current: w === lead && !hidden, hidden: hidden })
     }
 
     var open = item.entry ? appActionRows(item) : []
@@ -2152,7 +2365,7 @@ Item {
 
   function runRow(row, item, screen) {
     if (row.kind === "window") {
-      focusWindow(row.toplevel, screen)
+      bringForward(row.toplevel, screen)
       return
     }
     switch (row.act) {
@@ -3241,6 +3454,7 @@ Item {
         hideTimer.restart()
       }
 
+
       function openMenu(button, item, isFolder) {
         win.tipText = ""
         win.menuTarget = button
@@ -4306,7 +4520,7 @@ Item {
           id: menuCard
           x: root.shadowPad
           y: root.shadowPad
-          width: Math.min(320, Math.max(180, menuColumn.implicitWidth)) + 12
+          width: Math.min(300, Math.max(180, menuColumn.naturalWidth)) + 12
           height: menuColumn.implicitHeight + 12
           color: root.surface
           border.color: root.hairline
@@ -4341,6 +4555,18 @@ Item {
             readonly property var windowRows: win.menuList.filter(function(r) { return r.kind === "window" })
             readonly property var otherRows: win.menuList.filter(function(r) { return r.kind !== "window" })
             readonly property int maxWindowRows: 10
+            // How wide the widest row wants to be. (The Column's own implicitWidth can't say: every row
+            // takes its width from the column, so it would only ever echo the current width.)
+            readonly property real naturalWidth: {
+              var w = 0
+              var repeaters = [windowRepeater, otherRepeater]
+              for (var r = 0; r < repeaters.length; r++)
+                for (var i = 0; i < repeaters[r].count; i++) {
+                  var row = repeaters[r].itemAt(i)
+                  if (row) w = Math.max(w, row.implicitWidth)
+                }
+              return w
+            }
 
             Flickable {
               id: windowList
@@ -4358,6 +4584,7 @@ Item {
                 id: windowColumn
                 width: windowList.width
                 Repeater {
+                  id: windowRepeater
                   model: menuColumn.windowRows
                   delegate: menuRowComponent
                 }
@@ -4387,6 +4614,7 @@ Item {
             }
 
             Repeater {
+              id: otherRepeater
               model: menuColumn.otherRows
               delegate: menuRowComponent
             }
@@ -4408,7 +4636,7 @@ Item {
 
                 width: menuColumn.width
                 implicitWidth: isSeparator ? 0
-                  : label.implicitWidth + (indented ? 34 : 24) + (isSubmenu ? trailing.implicitWidth + 16 : 0)
+                  : label.implicitWidth + (indented ? 42 : 24) + (isSubmenu ? trailing.implicitWidth + 16 : 0)
                 height: isSeparator ? 13 : isText ? label.implicitHeight + 8 : 32
 
                 Rectangle {
@@ -4431,11 +4659,11 @@ Item {
 
                 // Leading column: check mark (focused window, selected choice) or back arrow.
                 Text {
-                  visible: (menuRow.isWindow && menuRow.modelData.current)
+                  visible: (menuRow.isWindow && (menuRow.modelData.current || menuRow.modelData.hidden))
                         || (menuRow.isChoice && menuRow.modelData.checked) || menuRow.isBack
                   anchors.verticalCenter: parent.verticalCenter
                   x: 10
-                  text: menuRow.isBack ? "‹" : "✓"
+                  text: menuRow.isBack ? "‹" : (menuRow.isWindow && menuRow.modelData.hidden) ? "◇" : "✓"
                   color: Commons.Color.popups.text
                   font.family: root.uiFont
                   font.pixelSize: menuRow.isBack ? root.uiFontSize + 4 : root.uiFontSize

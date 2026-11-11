@@ -30,6 +30,7 @@ function dock(overrides = {}) {
     pins: ["files"], folders: [], middle: [], recentQuitAt: {}, trashName: "Trash",
     configLoaded: true, configBroken: false, configFinalCheck: false,
     iconSize: 52, spacingBaseSize: 52, baseGap: 15, baseEnds: 15, dividerGapRatio: 1.375,
+    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}),
     iconExtents: {}, themeIcons: {}, iconsWanted: {}, letterIcon: "vitrin:letter", appsIcon: "vitrin:apps", launcherOf: {},
     // effects
     syncLayout: () => calls.push(["syncLayout"]),
@@ -76,6 +77,50 @@ describe("computeGroups", () => {
       assert.equal(g.byKey[id].length, 2, id);
       assert.deepEqual(g.order, [id]);
     }
+  });
+
+  it("waits for a window no app matches for certain until its process has been asked", () => {
+    env.root.certainEntryFor = id => (id === "known" ? {} : null);
+    const g = env.root.computeGroups([{ appId: "org.omarchy.agent" }, { appId: "known" }]);
+    assert.equal(g.pending, true);
+    assert.deepEqual(g.order, ["known"]);                   // (not shown under its own id meanwhile)
+    env.root.windowHints = { "org.omarchy.agent": { exe: "/usr/bin/ghostty" } };
+    env.root.keyFor = id => (id === "org.omarchy.agent" ? "com.mitchellh.ghostty" : id);
+    const after = env.root.computeGroups([{ appId: "org.omarchy.agent" }, { appId: "known" }]);
+    assert.equal(after.pending, false);
+    assert.deepEqual(after.order, ["com.mitchellh.ghostty", "known"]);
+  });
+
+  it("stops waiting after the limit, whatever happened to the question", () => {
+    env.root.certainEntryFor = () => null;
+    env.root.hintWaitMax = 2000;
+    env.root.firstSeen = { stuck: Date.now() - 500 };
+    assert.equal(env.root.computeGroups([{ appId: "stuck" }]).pending, true);
+    env.root.firstSeen = { stuck: Date.now() - 2500 };
+    const g = env.root.computeGroups([{ appId: "stuck" }]);
+    assert.deepEqual(g.order, ["stuck"]);
+    assert.equal(g.pending, false);
+  });
+
+  it("waits for a window that hasn't been noticed yet", () => {
+    env.root.certainEntryFor = () => null;
+    env.root.hintWaitMax = 2000;
+    env.root.firstSeen = {};
+    assert.equal(env.root.computeGroups([{ appId: "new" }]).pending, true);
+  });
+
+  it("shows a window nothing matches under its own id once its process was asked", () => {
+    env.root.certainEntryFor = () => null;
+    env.root.windowHints = { mystery: { launched: "", exe: "", cmd: "" } };
+    const g = env.root.computeGroups([{ appId: "mystery" }]);
+    assert.deepEqual(g.order, ["mystery"]);
+    assert.equal(g.pending, false);
+  });
+
+  it("looks up an alias's target, not the window id, when deciding whether to wait", () => {
+    env.root.effectiveAliases = { odd: "foot" };
+    env.root.certainEntryFor = id => (id === "foot" ? {} : null);
+    assert.equal(env.root.computeGroups([{ appId: "odd" }]).pending, false);
   });
 
   it("waits for windows under a shared id until their entry is known", () => {

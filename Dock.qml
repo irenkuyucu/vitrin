@@ -604,6 +604,15 @@ Item {
       onStreamFinished: root.applyHints(hintFinder.appId, text)
     }
     onRunningChanged: if (!running) Qt.callLater(root.nextHint)
+    // No answer at all (the script couldn't run): after a moment, the window is shown under
+    // its own id instead of waiting for ever.
+    onExited: { hintFallback.appId = hintFinder.appId; hintFallback.restart() }
+  }
+  Timer {
+    id: hintFallback
+    property string appId: ""
+    interval: 500
+    onTriggered: if (root.windowHints[appId] === undefined) root.applyHints(appId, "")
   }
 
   function requestHints(appId) {
@@ -1092,7 +1101,18 @@ Item {
 
   // Open windows grouped by app: { byKey: { key: [toplevel, ...] }, order: [key, ...] }.
   readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values,
-    root.effectiveAliases, root.windowHints, root.launcherOf)
+    root.effectiveAliases, root.windowHints, root.launcherOf, root.hintClock)
+
+  // A window waits at most this long (ms) for its process to be asked (see computeGroups); the
+  // clock ticks while any wait is on, so one that runs out is noticed.
+  readonly property int hintWaitMax: 2000
+  property int hintClock: 0
+  Timer {
+    interval: 500
+    repeat: true
+    running: root.groups.pending
+    onTriggered: root.hintClock++
+  }
 
   // Windows that aren't apps to the user, never shown in the dock: Omarchy's screensaver.
   readonly property var hiddenAppIds: ["org.omarchy.screensaver"]
@@ -1302,10 +1322,10 @@ Item {
     return id && DesktopEntries.byId(id) ? id : ""
   }
 
-  function computeGroups(toplevels, _apps, _aliases, _hints, _launchers) {
+  function computeGroups(toplevels, _apps, _aliases, _hints, _launchers, _clock) {
     var byKey = Object.create(null)      // (no inherited names: an app id can be "constructor")
     var order = []
-    var pending = false                  // some windows are left out for now (see sharedAppIds)
+    var pending = false                  // some windows are left out for now (see sharedAppIds, unmatched ones)
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
       if (!t || !t.appId || root.hiddenAppIds.indexOf(t.appId) !== -1) continue
@@ -1319,7 +1339,20 @@ Item {
         key = sharedKeyFor(owner)
         if (key === null) { pending = true; continue }
       }
-      key = key || keyFor(owner.appId || t.appId)
+      if (!key) {
+        // A window that matches no app for certain waits until its process has been asked
+        // (see noteUnmatched). Before that it would sit under its window id for a moment, get
+        // that id into the middle section, and leave an icon behind when the answer moves it
+        // under its real app (a terminal window opened by a notification, say). It never waits
+        // longer than hintWaitMax, whatever happens to the question.
+        var id = owner.appId || t.appId
+        var target = root.effectiveAliases[id] || id
+        if (!certainEntryFor(target) && root.windowHints[target] === undefined) {
+          var since = root.firstSeen[target]
+          if (since === undefined || Date.now() - since < root.hintWaitMax) { pending = true; continue }
+        }
+        key = keyFor(id)
+      }
       if (!byKey[key]) {
         byKey[key] = []
         order.push(key)

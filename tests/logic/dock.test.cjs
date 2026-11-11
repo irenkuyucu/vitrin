@@ -15,10 +15,10 @@ function dock(overrides = {}) {
     Util: { fileUrl: p => "file://" + p },
     configFile: { setText: t => calls.push(["write", t]) },
     ToplevelManager: { toplevels: { values: [] } },
-    DesktopEntries: { byId: id => (overrides.entries || {})[id] || null },
+    DesktopEntries: { byId: id => (overrides.entries || {})[id] || null, applications: { values: overrides.apps || [{}] } },
     menuColumn: { windowRows: [] },
     windowList: { contentY: 0, height: 320 },
-    console: { warn: m => calls.push(["warn", m]), log: () => {}, error: () => {} },
+    console: { warn: m => calls.push(["warn", m]), log: m => calls.push(["log", m]), error: () => {} },
     ...overrides.globals,
   };
   const env = load("Dock.qml", { globals });
@@ -29,10 +29,10 @@ function dock(overrides = {}) {
     fixedApp: "files", knownFileManagers: ["org.gnome.Nautilus", "thunar"], appsKey: "vitrin:apps", showApps: true,
     terminalApp: "", effectiveAliases: {}, aliases: {}, hiddenAppIds: ["org.omarchy.screensaver"],
     sharedAppIds: ["TUI.tile", "TUI.float"], vendorWords: ["org", "com", "net", "io", "dev", "app", "desktop", "github", "gitlab"],
-    pins: ["files"], folders: [], middle: [], recentQuitAt: {}, trashName: "Trash",
+    pins: ["files"], alwaysShow: [], reportedHelpers: {}, folders: [], middle: [], recentQuitAt: {}, trashName: "Trash",
     configLoaded: true, configBroken: false, configFinalCheck: false,
     iconSize: 52, spacingBaseSize: 52, baseGap: 15, baseEnds: 15, dividerGapRatio: 1.375,
-    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}), windowsSettled: true,
+    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}), entryFor: () => ({}), windowsSettled: true,
     noDisplayApps: ["imv", "imv-dir", "gcr-viewer"], recentMax: 3, showRecent: true, layout: [],
     iconExtents: {}, themeIcons: {}, iconsWanted: {}, letterIcon: "vitrin:letter", appsIcon: "vitrin:apps", launcherOf: {},
     // effects
@@ -140,6 +140,20 @@ describe("computeGroups", () => {
       assert.deepEqual(g.order, ["gedit"]);
     });
 
+    it("keeps the windows of an app listed under alwaysShow, by window id or entry id", () => {
+      assert.deepEqual(setup({ alwaysShow: ["portal"] }).root.computeGroups([{ appId: "portal" }]).order, ["portal"]);
+      assert.deepEqual(setup({ alwaysShow: ["xdg-desktop-portal-gtk"] }).root.computeGroups([{ appId: "portal" }]).order, ["portal"]);
+    });
+
+    it("says in the log, once, why a helper's windows aren't shown and how to show them", () => {
+      const e = setup();
+      e.root.reportHelper("portal");
+      e.root.reportHelper("portal");
+      const lines = e.calls.filter(c => c[0] === "log");
+      assert.equal(lines.length, 1);
+      assert.match(lines[0][1], /alwaysShow/);
+    });
+
     it("keeps one that is pinned, a file viewer, or given an alias by the user", () => {
       assert.deepEqual(setup({ pins: ["files", "xdg-desktop-portal-gtk"] }).root.computeGroups([{ appId: "portal" }]).order, ["portal"]);
       assert.deepEqual(setup().root.computeGroups([{ appId: "imv" }]).order, ["imv"]);
@@ -201,6 +215,25 @@ describe("syncLayout", () => {
       { "xdg-desktop-portal-gtk": { id: "xdg-desktop-portal-gtk", noDisplay: true } });
     env.root.syncLayout();
     assert.deepEqual(env.root.middle, ["WhatsApp"]);
+  });
+
+  it("forgets quit apps that no app matches at all (a click on them starts nothing)", () => {
+    const known = { WhatsApp: { id: "WhatsApp" }, btop: { id: "btop" } };
+    const env = setup({ middle: ["WhatsApp", "ghost-id", "btop"], recentQuitAt: { WhatsApp: 1, "ghost-id": 2, btop: 3 },
+      entryFor: id => known[id] || null });
+    env.root.syncLayout();
+    assert.deepEqual(env.root.middle, ["WhatsApp", "btop"]);
+  });
+
+  it("doesn't judge before the apps are known", () => {
+    const early = setup({ middle: ["ghost-id"], recentQuitAt: { "ghost-id": 2 }, entryFor: () => null, windowsSettled: false });
+    early.root.syncLayout();
+    assert.deepEqual(early.root.middle, ["ghost-id"]);
+    const empty = dock({ keep: ["syncLayout"], apps: [], root: { groups: { byKey: Object.create(null), order: [], pending: false },
+      middle: ["ghost-id"], recentQuitAt: { "ghost-id": 2 }, effectiveAliases: {}, entryFor: () => null } });
+    empty.root.saveConfig = () => {};
+    empty.root.syncLayout();
+    assert.deepEqual(empty.root.middle, ["ghost-id"]);
   });
 
   it("keeps a running app even if its key looks stale", () => {
@@ -272,6 +305,18 @@ describe("applyConfig", () => {
     assert.deepEqual(env.root.aliases, { x: "y" });
     assert.equal(env.root.folders.length, 2);
     assert.equal(env.root.configLoaded, true);
+  });
+
+  it("reads the apps to always show, ignoring anything that isn't an id", () => {
+    env.root.applyConfig(config({ alwaysShow: ["my.viewer", "", 5, null, "imv"] }));
+    assert.deepEqual(env.root.alwaysShow, ["my.viewer", "imv"]);
+  });
+
+  it("adds an empty alwaysShow to a file that lacks it, and saves it", () => {
+    env.root.alwaysShow = ["old"];
+    env.root.applyConfig(JSON.stringify({ pins: ["files"], folders: [], aliases: {} }));
+    assert.deepEqual(env.root.alwaysShow, []);
+    assert.ok(env.calls.some(c => c[0] === "write"));
   });
 
   it("clears the aliases when the key is removed from the file", () => {
@@ -348,7 +393,7 @@ describe("saveConfig", () => {
     env.root.saveConfig();
     assert.deepEqual(names(env)[0], {
       settings: { iconSize: 52 }, pins: ["files", "a"], folders: [{ path: "trash:///", name: "Trash" }],
-      recent: [{ key: "m", quitAt: 7 }], aliases: { x: "y" },
+      recent: [{ key: "m", quitAt: 7 }], aliases: { x: "y" }, alwaysShow: [],
     });
   });
 });

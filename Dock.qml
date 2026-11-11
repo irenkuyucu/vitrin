@@ -116,6 +116,9 @@ Item {
   // puts that app's windows under another app's icon. Empty by default; terminals are
   // handled automatically (see "terminal" below).
   property var aliases: ({})
+  // Apps whose windows are always shown, even where the dock would take them for helpers (see
+  // isHelperEntry): ids of windows or desktop entries, from "alwaysShow" in the config file.
+  property var alwaysShow: []
 
   // Session state: the order apps appear in. Pinned apps keep their saved order; apps that
   // aren't pinned are added at the end when they open and removed when they close.
@@ -302,6 +305,7 @@ Item {
     applySettings(root.settingDefaults)
     root.folders = defaultFolders()
     root.aliases = ({})
+    root.alwaysShow = []
     root.middle = []
     root.recentQuitAt = ({})
     root.firstRun = true
@@ -378,6 +382,13 @@ Item {
       assignIfChanged("aliases", cfg.aliases)
     } else {
       assignIfChanged("aliases", {})        // (removed from the file: the old ones go too)
+      needsSave = true
+    }
+
+    if (Array.isArray(cfg.alwaysShow)) {
+      assignIfChanged("alwaysShow", cfg.alwaysShow.filter(function(id) { return typeof id === "string" && id.length > 0 }))
+    } else {
+      assignIfChanged("alwaysShow", [])
       needsSave = true
     }
 
@@ -494,7 +505,8 @@ Item {
       recent: root.middle.map(function(k) {
         return { key: k, quitAt: root.recentQuitAt[k] !== undefined ? root.recentQuitAt[k] : null }
       }),
-      aliases: root.aliases
+      aliases: root.aliases,
+      alwaysShow: root.alwaysShow
     }, null, 2) + "\n")
   }
 
@@ -1128,20 +1140,34 @@ Item {
     if (!entry || !entry.noDisplay) return false
     var id = String(entry.id)
     return root.noDisplayApps.indexOf(id) === -1 && root.pins.indexOf(id) === -1      // (a pin is a choice)
+      && root.alwaysShow.indexOf(id) === -1
   }
 
   // Only for a window that matches its entry for certain (a guess could pick a helper's entry by
   // accident), and not one given an alias in the config file, which is a choice too.
   function isHelperWindow(appId) {
-    return root.aliases[appId] === undefined && isHelperEntry(certainEntryFor(appId))
+    return root.aliases[appId] === undefined && root.alwaysShow.indexOf(appId) === -1
+      && isHelperEntry(certainEntryFor(appId))
   }
 
-  // For a key kept in the middle section: a helper's entry id, or an id that an alias sends to
-  // another app now (a leftover from before it was known).
+  // Said once per window id, in the log, with the way to show such windows after all.
+  property var reportedHelpers: ({})
+  function reportHelper(appId) {
+    if (root.reportedHelpers[appId]) return
+    root.reportedHelpers[appId] = true
+    console.log(root.pluginId + ": not showing windows with id \"" + appId + "\" (their desktop entry is marked "
+      + "NoDisplay, which is for helpers). To show them, add \"" + appId + "\" to \"alwaysShow\" in " + root.configPath)
+  }
+
+  // For a key kept in the middle section: a helper's entry id, an id that an alias sends to
+  // another app now, or an id no app matches at all (leftovers from before it was known; a click
+  // on such an icon starts nothing). Not judged before the list of apps is there.
   function isStaleKey(key) {
     if (isHelperEntry(DesktopEntries.byId(key))) return true
     var to = root.effectiveAliases[key]
-    return to !== undefined && to !== key
+    if (to !== undefined && to !== key) return true
+    var appsKnown = root.windowsSettled && DesktopEntries.applications.values.length > 0
+    return appsKnown && !entryFor(key)
   }
 
   // Window ids that many apps share, so they say nothing about which app a window is: those of
@@ -1470,6 +1496,7 @@ Item {
       var appId = toplevels[i] && toplevels[i].appId
       if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
       if (root.hiddenAppIds.indexOf(appId) !== -1) continue
+      if (isHelperWindow(appId)) { reportHelper(appId); continue }
       var target = root.effectiveAliases[appId] || appId
       open[target] = true
       if (certainEntryFor(target)) continue

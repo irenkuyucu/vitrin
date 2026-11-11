@@ -118,6 +118,9 @@ shortcuts, in order, with the Trash always last. Each one looks like this:
 `displayAs` is `"stack"` to show the folder's newest files on its dock icon, or `"folder"`
 to show the folder icon. `icon` is an icon name or a path to an image.
 
+`alwaysShow` lists apps whose windows should always get an icon; see
+[a window doesn't show up](#troubleshooting).
+
 If the file can't be read (after a typo, for example), Vitrin keeps its current settings,
 doesn't overwrite your file, and saves a copy of it as `vitrin.json.broken`.
 
@@ -164,6 +167,15 @@ in the config file, pointing to the app's desktop entry ID:
 
 ```json
 "aliases": { "org.localsend.localsend_app": "localsend" }
+```
+
+**A window doesn't show up on the dock.** Vitrin leaves out windows of helpers, like file
+chooser dialogs, previews and password prompts, which apps mark as "not an app to show" in
+their desktop entry. If a real app of yours is marked that way, add its ID to `alwaysShow` in
+the config file. The shell log names the ID of any window left out, and the line to add:
+
+```json
+"alwaysShow": ["imv"]
 ```
 
 To read the shell log:

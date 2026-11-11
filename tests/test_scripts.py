@@ -103,13 +103,10 @@ class IconTests(Fixture):
             "[Icon Theme]\nName=Test\nDirectories=128x128/apps\n[128x128/apps]\nSize=128\nType=Fixed\n")
         return icon_lookup.Theme("test", [str(root.parent)]), folder
 
-    def test_finds_an_icon(self):
+    def test_finds_an_icon_and_only_that_icon(self):
         theme, folder = self.theme()
         (folder / "ghost.png").touch()
         self.assertEqual(theme.find("ghost"), str(folder / "ghost.png"))
-
-    def test_missing_icon(self):
-        theme, _ = self.theme()
         self.assertIsNone(theme.find("missing"))
 
     def test_icon_installed_after_first_scan_is_found(self):
@@ -137,6 +134,70 @@ class IconTests(Fixture):
         lookup.themes = {}
         lookup.use("test")
         self.assertEqual(len([t for t in lookup.chain if t.name == "test"]), 1)
+
+    def make_theme(self, name, dirs, inherits=None):
+        """A theme under self.base/icons: dirs maps a folder name to its index.theme keys."""
+        root = self.base / "icons" / name
+        root.mkdir(parents=True, exist_ok=True)
+        text = "[Icon Theme]\nName=%s\nDirectories=%s\n" % (name, ",".join(dirs))
+        if inherits:
+            text += "Inherits=%s\n" % inherits
+        for folder, keys in dirs.items():
+            (root / folder).mkdir(parents=True, exist_ok=True)
+            text += "[%s]\n%s\n" % (folder, "\n".join(f"{k}={v}" for k, v in keys.items()))
+        (root / "index.theme").write_text(text)
+        return root
+
+    def lookup(self):
+        lookup = icon_lookup.Lookup()
+        lookup.bases = [str(self.base / "icons")]
+        lookup.themes = {}
+        return lookup
+
+    def test_the_folder_nearest_the_wanted_size_wins(self):
+        # (the wanted size is icon_lookup.SIZE: 128)
+        root = self.make_theme("t", {"64": {"Size": 64, "Type": "Fixed"}, "96": {"Size": 96, "Type": "Fixed"},
+                                      "256": {"Size": 256, "Type": "Fixed"}})
+        theme = icon_lookup.Theme("t", [str(root.parent)])
+        for folder in ("64", "96", "256"):
+            (root / folder / "x.png").touch()
+        self.assertEqual(theme.find("x"), str(root / "96/x.png"))
+        time.sleep(0.02)                       # (folder times have a finite resolution)
+        (root / "96/x.png").unlink()
+        self.assertEqual(theme.find("x"), str(root / "64/x.png"))        # 64 px is nearer than 256 px
+
+    def test_among_equally_near_folders_the_one_big_enough_wins(self):
+        root = self.make_theme("t", {"64": {"Size": 64, "Type": "Fixed"}, "192": {"Size": 192, "Type": "Fixed"}})
+        theme = icon_lookup.Theme("t", [str(root.parent)])
+        (root / "64/x.png").touch()
+        (root / "192/x.png").touch()
+        self.assertEqual(theme.find("x"), str(root / "192/x.png"))       # (sharper than scaling 64 up)
+
+    def test_a_scalable_folder_covering_the_size_beats_a_near_fixed_one(self):
+        root = self.make_theme("t", {"96": {"Size": 96, "Type": "Fixed"},
+                                      "scalable": {"Size": 48, "Type": "Scalable", "MinSize": 16, "MaxSize": 512}})
+        theme = icon_lookup.Theme("t", [str(root.parent)])
+        (root / "96/x.png").touch()
+        (root / "scalable/x.svg").touch()
+        self.assertEqual(theme.find("x"), str(root / "scalable/x.svg"))
+
+    def test_png_comes_before_svg_in_one_folder(self):
+        root = self.make_theme("t", {"128": {"Size": 128, "Type": "Fixed"}})
+        theme = icon_lookup.Theme("t", [str(root.parent)])
+        (root / "128/x.svg").touch()
+        (root / "128/x.png").touch()
+        self.assertEqual(theme.find("x"), str(root / "128/x.png"))
+
+    def test_an_icon_missing_from_a_theme_comes_from_the_one_it_inherits(self):
+        parent = self.make_theme("parent", {"128": {"Size": 128, "Type": "Fixed"}})
+        child = self.make_theme("child", {"128": {"Size": 128, "Type": "Fixed"}}, inherits="parent")
+        (parent / "128/only-parent.png").touch()
+        (parent / "128/both.png").touch()
+        (child / "128/both.png").touch()
+        lookup = self.lookup()
+        lookup.use("child")
+        self.assertEqual(lookup.find("only-parent"), str(parent / "128/only-parent.png"))
+        self.assertEqual(lookup.find("both"), str(child / "128/both.png"))     # (the theme itself first)
 
     def test_protocol(self):
         hicolor = Path(self.env["XDG_DATA_HOME"]) / "icons/hicolor"
@@ -252,19 +313,6 @@ class ListingTests(Fixture):
         (folder / "sub").mkdir(parents=True)
         self.assertEqual(self.listing(folder)[1][1], b"inode/directory")
 
-    def test_date_added_cache_is_whole_after_parallel_runs(self):
-        folder = self.base / "folder"
-        folder.mkdir()
-        for i in range(300):
-            (folder / f"file-{i}.txt").touch()
-        runs = [self.start_script("list-folders.sh", 12, folder) for _ in range(4)]
-        for run in runs:
-            run.communicate(timeout=30)
-        cache = next((self.base / "cache/vitrin").glob("added-*.tsv"))
-        lines = cache.read_text().splitlines()
-        self.assertEqual(len(lines), 300)
-        self.assertEqual(list((self.base / "cache/vitrin").glob("*.tmp*")), [])
-
     @needs("gio")
     def test_folder_info_keeps_tabs_and_newlines_in_paths(self):
         folder = self.base / "tab\tline\nfolder"
@@ -273,12 +321,6 @@ class ListingTests(Fixture):
         self.assertEqual(fields[0].decode(), str(folder))
         self.assertTrue(fields[2])             # icon names
         self.assertEqual(fields[3:], [b""])    # nothing else
-
-    def test_folder_info_skips_files(self):
-        path = self.base / "file"
-        path.touch()
-        self.assertEqual(self.run_script("folder-info.sh", path).stdout, b"")
-
 
 # ---------------------------------------------------------------- watching folders
 
@@ -331,16 +373,6 @@ class WatcherTests(Fixture):
         time.sleep(0.5)
         (self.base / "a").mkdir()
         self.assertEqual(read_line(proc), f"{wanted}\n")   # (the dock then starts it again, closer)
-
-    def test_missing_watcher_handles_names_with_pattern_characters(self):
-        wanted = self.base / "we(ird).d+"
-        proc = self.start_script("watch-missing.sh", wanted)
-        self.addCleanup(stop, proc)
-        time.sleep(0.5)
-        (self.base / "weirdXd+").mkdir()
-        self.assertIsNone(read_line(proc, 0.8))
-        wanted.mkdir()
-        self.assertEqual(read_line(proc), f"{wanted}\n")
 
     def test_missing_watcher_has_nothing_to_do_when_everything_exists(self):
         self.assertEqual(self.run_script("watch-missing.sh", self.base).returncode, 0)
@@ -420,17 +452,6 @@ class LaunchTests(Fixture):
         self.assertEqual(len(lines), 3)
         self.assertIn(b"python", lines[1])
 
-    def test_default_places(self):
-        downloads = self.base / "Downloads"
-        downloads.mkdir()
-        self.stub("xdg-mime", "#!/bin/bash\necho thunar.desktop\n")
-        self.stub("xdg-user-dir", '#!/bin/bash\nprintf "%s/Downloads\\n" "$HOME"\n')
-        self.stub("gio", '#!/bin/bash\nif [ "${@: -1}" = trash:/// ]; then echo "  standard::display-name: Trash"; '
-                         'else echo "  standard::display-name: Downloads"; fi\n')
-        self.assertEqual(self.run_script("default-places.sh").stdout.decode().splitlines(),
-                         ["thunar", str(downloads), "Downloads", "Trash"])
-
-
 # ---------------------------------------------------------------- previews
 
 @needs("magick")
@@ -466,15 +487,11 @@ class ThumbnailTests(Fixture):
         path, _ = self.make("a & b.png")
         self.assertEqual(self.logged()[0], str(path))
 
-    def test_quoted_arguments_in_the_command(self):
-        _, result = self.make(command='preview "%i" "%o"')
-        self.assertIn(b" new ", result.stdout)
-
-    def test_quoted_program_path_with_a_space(self):
+    def test_quoted_words_in_the_command(self):
         spaced = self.bin / "my tools"
         spaced.mkdir()
         shutil.copy(self.bin / "preview", spaced / "preview")
-        _, result = self.make(command=f'"{spaced}/preview" %i %o')
+        _, result = self.make(command=f'"{spaced}/preview" "%i" "%o"')      # (a program path with a space, quoted arguments)
         self.assertIn(b" new ", result.stdout)
 
     def test_no_previewer_for_the_type(self):

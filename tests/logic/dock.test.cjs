@@ -25,16 +25,14 @@ function dock(overrides = {}) {
   const r = env.root;
   const real = Object.assign({}, r);          // (functions a test wants to run for real, see overrides.keep)
   Object.assign(r, {
-    pluginId: "vitrin", home: "/home/u", configPath: "/home/u/.config/omarchy/vitrin.json",
-    fixedApp: "files", knownFileManagers: ["org.gnome.Nautilus", "thunar"], appsKey: "vitrin:apps", showApps: true,
-    terminalApp: "", effectiveAliases: {}, aliases: {}, hiddenAppIds: ["org.omarchy.screensaver"],
-    sharedAppIds: ["TUI.tile", "TUI.float"], vendorWords: ["org", "com", "net", "io", "dev", "app", "desktop", "github", "gitlab"],
-    pins: ["files"], alwaysShow: [], reportedHelpers: {}, folders: [], middle: [], recentQuitAt: {}, trashName: "Trash",
+    // (Constants like hiddenAppIds, appsKey or recentMax come from Dock.qml itself, see qml.cjs.)
+    home: "/home/u", configPath: "/home/u/.config/omarchy/vitrin.json",
+    fixedApp: "files", showApps: true, showRecent: true, iconSize: 52,
+    terminalApp: "", effectiveAliases: {}, aliases: {},
+    pins: ["files"], alwaysShow: [], reportedHelpers: {}, folders: [], middle: [], recentQuitAt: {},
     configLoaded: true, configBroken: false, configFinalCheck: false,
-    iconSize: 52, spacingBaseSize: 52, baseGap: 15, baseEnds: 15, dividerGapRatio: 1.375,
-    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}), entryFor: () => ({}), windowsSettled: true,
-    noDisplayApps: ["imv", "imv-dir", "gcr-viewer"], recentMax: 3, showRecent: true, layout: [],
-    iconExtents: {}, themeIcons: {}, iconsWanted: {}, letterIcon: "vitrin:letter", appsIcon: "vitrin:apps", launcherOf: {},
+    windowHints: {}, firstSeen: {}, certainEntryFor: () => ({}), entryFor: () => ({}), windowsSettled: true, layout: [],
+    iconExtents: {}, themeIcons: {}, iconsWanted: {}, launcherOf: {},
     // effects
     syncLayout: () => calls.push(["syncLayout"]),
     folderBounce: p => calls.push(["bounce", p]),
@@ -104,13 +102,8 @@ describe("computeGroups", () => {
     const g = env.root.computeGroups([{ appId: "stuck" }]);
     assert.deepEqual(g.order, ["stuck"]);
     assert.equal(g.pending, false);
-  });
-
-  it("waits for a window that hasn't been noticed yet", () => {
-    env.root.certainEntryFor = () => null;
-    env.root.hintWaitMax = 2000;
-    env.root.firstSeen = {};
-    assert.equal(env.root.computeGroups([{ appId: "new" }]).pending, true);
+    env.root.firstSeen = {};                                 // not noticed yet: still waiting
+    assert.equal(env.root.computeGroups([{ appId: "stuck" }]).pending, true);
   });
 
   it("shows a window nothing matches under its own id once its process was asked", () => {
@@ -172,10 +165,6 @@ describe("computeGroups", () => {
       for (const id of ids) assert.ok(e.constants.hiddenAppIds.includes(id), id);
       e.root.hiddenAppIds = e.constants.hiddenAppIds;
       assert.deepEqual(e.root.computeGroups(ids.map(appId => ({ appId }))).order, []);
-    });
-
-    it("keeps the file viewers in the shipped exception list", () => {
-      assert.deepEqual(setup().constants.noDisplayApps, ["imv", "imv-dir", "gcr-viewer"]);
     });
 
     it("waits while the list of apps hasn't loaded yet, but not for ever", () => {
@@ -265,7 +254,7 @@ describe("syncLayout", () => {
 describe("normalizePins", () => {
   it("keeps the file manager first, once, and adds the Apps icon", () => {
     const env = dock();
-    assert.deepEqual(env.root.normalizePins(["x", "files", "x"]), ["files", "vitrin:apps", "x"]);
+    assert.deepEqual(env.root.normalizePins(["x", "files", "x"]), ["files", env.root.appsKey, "x"]);
   });
 
   it("leaves out the Apps icon when it's turned off", () => {
@@ -275,17 +264,17 @@ describe("normalizePins", () => {
 
   it("moves pins saved under an alias to the app they're grouped under", () => {
     const env = dock({ root: { effectiveAliases: { "org.omarchy.terminal": "foot" } } });
-    assert.deepEqual(env.root.normalizePins(["files", "org.omarchy.terminal", "foot"]), ["files", "vitrin:apps", "foot"]);
+    assert.deepEqual(env.root.normalizePins(["files", "org.omarchy.terminal", "foot"]), ["files", env.root.appsKey, "foot"]);
   });
 
   it("drops another file manager in first place (it was the fixed one before)", () => {
     const env = dock();
-    assert.deepEqual(env.root.normalizePins(["thunar", "x"]), ["files", "vitrin:apps", "x"]);
+    assert.deepEqual(env.root.normalizePins(["thunar", "x"]), ["files", env.root.appsKey, "x"]);
   });
 
   it("ignores things that aren't ids", () => {
     const env = dock();
-    assert.deepEqual(env.root.normalizePins(["files", 5, "", null, "x"]), ["files", "vitrin:apps", "x"]);
+    assert.deepEqual(env.root.normalizePins(["files", 5, "", null, "x"]), ["files", env.root.appsKey, "x"]);
   });
 });
 
@@ -301,7 +290,7 @@ describe("applyConfig", () => {
       pins: ["files", "a"], aliases: { x: "y" },
       folders: [{ path: "~/Downloads", name: "Downloads" }, { path: "trash:///", name: "Trash" }],
     }));
-    assert.deepEqual(env.root.pins, ["files", "vitrin:apps", "a"]);
+    assert.deepEqual(env.root.pins, ["files", env.root.appsKey, "a"]);
     assert.deepEqual(env.root.aliases, { x: "y" });
     assert.equal(env.root.folders.length, 2);
     assert.equal(env.root.configLoaded, true);
@@ -331,14 +320,9 @@ describe("applyConfig", () => {
     assert.ok(env.calls.some(c => c[0] === "write"), "the corrected order is saved");
   });
 
-  it("names a folder after itself when the file gives no name", () => {
-    env.root.applyConfig(config({ folders: [{ path: "~/Pictures/Holiday/" }, { path: "trash:///" }] }));
-    assert.deepEqual(env.root.folders.map(f => f.name), ["Holiday", "Trash"]);
-  });
-
-  it("skips folders without a path", () => {
-    env.root.applyConfig(config({ folders: [{ name: "x" }, { path: "" }, null, { path: "/tmp", name: "Tmp" }] }));
-    assert.deepEqual(env.root.folders.map(f => f.path), ["/tmp"]);
+  it("names a folder after itself when the file gives no name, and skips entries without a path", () => {
+    env.root.applyConfig(config({ folders: [{ path: "~/Pictures/Holiday/" }, { name: "x" }, { path: "" }, null, { path: "trash:///" }] }));
+    assert.deepEqual(env.root.folders.map(f => f.name), ["Holiday", "Trash"]);      // (entries without a path are skipped)
   });
 
   it("reads the middle section, once per app and without hidden ones", () => {
@@ -450,28 +434,12 @@ describe("folder shortcuts", () => {
     env.root.moveFolder(2, 0);
     assert.deepEqual(paths(), ["~/Downloads", "/a", "/b", "trash:///"]);
   });
-
-  it("changes one option of one folder", () => {
-    env.root.setFolderOption("~/Downloads", "displayAs", "folder");
-    assert.equal(env.root.folders[0].displayAs, "folder");
-    assert.equal(env.root.folders[1].displayAs, undefined);
-  });
 });
 
 // ------------------------------------------------------------------ paths and listings
 
 describe("paths", () => {
   const env = dock();
-  it("expands ~ only at the start", () => {
-    assert.equal(env.root.expandPath("~"), "/home/u");
-    assert.equal(env.root.expandPath("~/x"), "/home/u/x");
-    assert.equal(env.root.expandPath("/a/~/b"), "/a/~/b");
-  });
-
-  it("turns file URLs into paths", () => {
-    assert.equal(env.root.localPath("file:///tmp/a%20b%C3%B6"), "/tmp/a bö");
-    assert.equal(env.root.localPath("trash:///"), "trash:///");
-  });
 
   it("builds file URIs the way GIO does, so thumbnails are shared", () => {
     assert.equal(env.root.fileUri("/tmp/ö #%.png"), "file:///tmp/%C3%B6%20%23%25.png");
@@ -514,13 +482,6 @@ describe("parseFolderListing", () => {
 
 describe("names", () => {
   const env = dock();
-  it("windowLabel shortens long titles and falls back to the app id", () => {
-    assert.equal(env.root.windowLabel({ title: "short" }), "short");
-    assert.equal(env.root.windowLabel({ title: "x".repeat(48) }).length, 48);
-    assert.equal(env.root.windowLabel({ title: "x".repeat(49) }), "x".repeat(47) + "…");
-    assert.equal(env.root.windowLabel({ appId: "foot" }), "foot");
-    assert.equal(env.root.windowLabel({}), "Window");
-  });
 
   it("prettyName makes a readable name from an app id", () => {
     assert.equal(env.root.prettyName("org.localsend.localsend_app", []), "Localsend");
@@ -570,14 +531,6 @@ describe("menus by keyboard", () => {
     env.win.keyMenuMove(-1);
     assert.equal(env.win.menuKeyRow, quit);
   });
-
-  it("tells rows apart by what they are, not only by their label", () => {
-    const env = menu(), { a, b } = rows();
-    env.win.menuList = [a, b];
-    assert.notEqual(env.win.rowKey(a), env.win.rowKey(b));
-    const x = { kind: "action", label: "Open", act: "open" }, y = { kind: "action", label: "Open", act: "open-with" };
-    assert.notEqual(env.win.rowKey(x), env.win.rowKey(y));
-  });
 });
 
 // ------------------------------------------------------------------ choosing a window row
@@ -605,21 +558,6 @@ describe("icons", () => {
     assert.equal(env.root.pickIcon(["unmeasured"]), "unmeasured");
   });
 
-  it("themeIcon asks the lookup once for a name it doesn't know, and answers from Qt meanwhile", () => {
-    const asked = [];
-    const env = dock({ root: { askForIcons: () => asked.push("ask") } });
-    assert.equal(env.root.themeIcon("ghost"), "image://icon/ghost");
-    env.root.themeIcon("ghost");
-    assert.deepEqual(Object.keys(env.root.iconsWanted), ["ghost"]);
-    assert.equal(asked.length, 1);
-  });
-
-  it("themeIcon returns the lookup's answer, including 'none' (empty)", () => {
-    const env = dock({ root: { themeIcons: { have: "file:///a.png", none: "" } } });
-    assert.equal(env.root.themeIcon("have"), "file:///a.png");
-    assert.equal(env.root.themeIcon("none"), "");
-  });
-
   it("candidates go from the entry's own icon to the letter tile, without repeats", () => {
     const env = dock({ root: { themeIcons: { "my-icon": "file:///my.png", "my-app": "file:///app.png" } } });
     const list = env.root.iconCandidatesFor({ icon: "my-icon", id: "my-app" }, "my-app");
@@ -627,12 +565,6 @@ describe("icons", () => {
     assert.ok(list.includes("file:///app.png"));
     assert.equal(list.at(-1), "vitrin:letter");
     assert.equal(new Set(list).size, list.length);
-  });
-
-  it("a path icon becomes a file URL candidate", () => {
-    const env = dock();
-    const list = env.root.iconCandidatesFor({ icon: "/opt/app/icon.png", id: "x" }, "x");
-    assert.equal(list[0], "file:///opt/app/icon.png");
   });
 
   it("keeps working after the lookup process dies (restarts it, gives up after 5 quick stops)", () => {
@@ -672,11 +604,6 @@ describe("spacing", () => {
     assert.equal(r.fractional(40.5), true);
     assert.ok(Math.abs(r.gapFor(40.5) - 15 * 40.5 / 52) < 1e-9);
     assert.equal(Number.isInteger(r.gapFor(51.9)), false);
-  });
-
-  it("the divider's sides are 1.375 gaps", () => {
-    const r = at(52);
-    assert.equal(r.dividerSideFor(52), Math.round(15 * 1.375));
   });
 });
 

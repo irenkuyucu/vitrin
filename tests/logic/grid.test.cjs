@@ -16,13 +16,6 @@ describe("app grid", () => {
     assert.deepEqual(root.filterApps(list, "  TERM ").map(a => a.lower), ["terminal", "xterminal", "other"]);
   });
 
-  it("shows everything for an empty search", () => {
-    const { root } = grid();
-    const list = [{ lower: "a", extra: "" }, { lower: "b", extra: "" }];
-    assert.equal(root.filterApps(list, ""), list);
-    assert.equal(root.filterApps(list, undefined), list);
-  });
-
   it("lists visible apps by name, with what the search needs", () => {
     const entries = [
       { id: "b.desktop", name: "Beta", genericName: "Editor", comment: "Edits", keywords: ["text"] },

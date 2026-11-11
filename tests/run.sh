@@ -30,7 +30,7 @@ step "qmllint: nothing new"
 python3 -I tests/lint_baseline.py || fail qmllint
 
 step "script tests"
-PYTHONDONTWRITEBYTECODE=1 python3 -I -m unittest discover -s tests -p 'test_*.py' 2>&1 | tail -n 40
+python3 -B -I -m unittest discover -s tests -p 'test_*.py' 2>&1 | tail -n 40
 [ "${PIPESTATUS[0]}" = 0 ] || fail "script tests"
 
 step "QML logic tests"

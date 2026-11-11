@@ -1949,20 +1949,54 @@ Item {
     id: folderWatcher
     stdout: SplitParser {
       onRead: function(line) {
-        var dir = String(line).replace(/\/+$/, "")
+        // "<events>|<path>"
+        var bar = String(line).indexOf("|")
+        var events = String(line).slice(0, bar)
+        var dir = String(line).slice(bar + 1).replace(/\/+$/, "")
         if (dir === root.trashFilesDir) trashRefreshSoon.restart()
         else folderRefreshSoon.restart()
+        // A folder that went away is waited for (by missingWatcher) from now on.
+        if (events.indexOf("DELETE_SELF") !== -1 || events.indexOf("MOVE_SELF") !== -1) Qt.callLater(root.restartWatcher)
       }
     }
+    property int stops: 0                  // stops asked for whose exit hasn't come yet
     // 0: nothing to watch (all folders missing); anything else: it stopped unexpectedly, so
     // try again shortly.
     onExited: function(code) {
-      if (root.watcherStops > 0) {         // stopped on purpose, to watch other folders
-        root.watcherStops--
-        if (root.watcherStops === 0) Qt.callLater(root.startWatcher)
+      if (folderWatcher.stops > 0) {       // stopped on purpose, to watch other folders
+        folderWatcher.stops--
+        if (folderWatcher.stops === 0) Qt.callLater(root.startWatcher)
         return
       }
       if (code !== 0 && root.watchedDirs.length > 0) watcherRestart.restart()
+    }
+  }
+
+  // Folders that are missing (not created yet, deleted, or on a drive that isn't there): their
+  // nearest existing parent is watched for the folder's name to appear (scripts/watch-missing.sh).
+  // Then everything is watched again, so the folder is watched itself and listed.
+  Process {
+    id: missingWatcher
+    property int stops: 0
+    stdout: SplitParser {
+      onRead: function(line) { missingArrived.restart() }
+    }
+    onExited: function(code) {
+      if (missingWatcher.stops > 0) {
+        missingWatcher.stops--
+        if (missingWatcher.stops === 0) Qt.callLater(root.startMissingWatcher)
+        return
+      }
+      if (code !== 0 && root.watchedDirs.length > 0) watcherRestart.restart()
+    }
+  }
+  Timer {
+    id: missingArrived
+    interval: 300                          // (a folder and its contents can arrive in a burst)
+    onTriggered: {
+      root.restartWatcher()
+      folderRefreshSoon.restart()
+      trashRefreshSoon.restart()
     }
   }
   Timer {
@@ -1970,19 +2004,29 @@ Item {
     interval: 2000
     onTriggered: root.restartWatcher()
   }
-  property int watcherStops: 0            // stops asked for whose exit hasn't come yet
   function restartWatcher() {
     if (folderWatcher.running) {
-      root.watcherStops++                  // starts again once it has stopped
+      folderWatcher.stops++                // starts again once it has stopped
       folderWatcher.running = false
     } else {
       startWatcher()
+    }
+    if (missingWatcher.running) {
+      missingWatcher.stops++
+      missingWatcher.running = false
+    } else {
+      startMissingWatcher()
     }
   }
   function startWatcher() {
     if (folderWatcher.running || root.watchedDirs.length === 0) return
     folderWatcher.command = ["bash", root.script("watch-folders.sh")].concat(root.watchedDirs)
     folderWatcher.running = true
+  }
+  function startMissingWatcher() {
+    if (missingWatcher.running || root.watchedDirs.length === 0) return
+    missingWatcher.command = ["bash", root.script("watch-missing.sh")].concat(root.watchedDirs)
+    missingWatcher.running = true
   }
   onWatchedDirsChanged: Qt.callLater(root.restartWatcher)
 

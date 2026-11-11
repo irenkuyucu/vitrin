@@ -1,0 +1,17 @@
+AppGrid.qml unqualified 56
+AppsIcon.qml unqualified 11
+Dock.qml incompatible-type 2
+Dock.qml missing-property 1
+Dock.qml unqualified 129
+Dock.qml unresolved-type 2
+DockButton.qml unqualified 7
+DockDivider.qml unqualified 1
+DockSlider.qml unqualified 2
+DockSwitch.qml unqualified 1
+FileIcon.qml unqualified 2
+FilePile.qml unqualified 6
+FocusRing.qml missing-property 2
+FocusRing.qml unqualified 1
+MissingBadge.qml unqualified 2
+StackPopup.qml incompatible-type 2
+StackPopup.qml unqualified 47

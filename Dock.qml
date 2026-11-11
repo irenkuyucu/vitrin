@@ -239,7 +239,7 @@ Item {
     var normalized = normalizePins(root.pins)
     if (JSON.stringify(normalized) !== JSON.stringify(root.pins)) {
       root.pins = normalized
-      saveConfig()
+      if (root.configLoaded) saveConfig()    // (before that, the file's own pins are what's normalized)
     }
   }
 
@@ -377,6 +377,7 @@ Item {
     if (cfg.aliases && typeof cfg.aliases === "object" && !Array.isArray(cfg.aliases)) {
       assignIfChanged("aliases", cfg.aliases)
     } else {
+      assignIfChanged("aliases", {})        // (removed from the file: the old ones go too)
       needsSave = true
     }
 
@@ -391,6 +392,12 @@ Item {
             : expandPath(folder.path).replace(/\/+$/, "").split("/").pop() || folder.path })
         }
         folders.push(folder)
+      }
+      // The Trash is always the last shortcut (what the move and add code assume).
+      var trashAt = folders.findIndex(function(f) { return isTrash(f) })
+      if (trashAt !== -1 && trashAt !== folders.length - 1) {
+        folders.push(folders.splice(trashAt, 1)[0])
+        needsSave = true
       }
       assignIfChanged("folders", folders)
     } else {
@@ -479,7 +486,7 @@ Item {
   }
 
   function saveConfig() {
-    if (root.configBroken) return
+    if (root.configBroken || !root.configLoaded) return     // (nothing is saved before the file has been read)
     configFile.setText(JSON.stringify({
       settings: currentSettings(),
       pins: root.pins,
@@ -752,6 +759,23 @@ Item {
         var m = String(line).match(/icon-theme:\s*'([^']*)'/)
         if (m) root.useIconTheme(m[1])
       }
+    }
+  }
+
+  // Apps installed or removed while the dock runs: icons that weren't found may exist now (and
+  // removed ones don't), so everything in use is looked up again once the install settles.
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() { iconRefresh.restart() }
+  }
+  Timer {
+    id: iconRefresh
+    interval: 2000
+    onTriggered: {
+      root.mimeIconCache = ({})
+      var names = Object.keys(root.themeIcons).concat(Object.keys(root.iconsWanted))
+      root.iconsWanted = ({})
+      if (iconLookup.running && names.length) iconLookup.write(names.join("\n") + "\n@flush\n")
     }
   }
 
@@ -1231,7 +1255,7 @@ Item {
   }
 
   function computeGroups(toplevels, _apps, _aliases, _hints, _launchers) {
-    var byKey = {}
+    var byKey = Object.create(null)      // (no inherited names: an app id can be "constructor")
     var order = []
     var pending = false                  // some windows are left out for now (see sharedAppIds)
     for (var i = 0; i < toplevels.length; i++) {
@@ -2019,7 +2043,7 @@ Item {
 
   // The cache names a preview after the MD5 of the file's URI, escaped the GLib way.
   function fileUri(path) {
-    return ("file://" + encodeURI(path)).replace(/#/g, "%23").replace(/\?/g, "%3F")
+    return ("file://" + encodeURI(path)).replace(/#/g, "%23").replace(/\?/g, "%3F").replace(/;/g, "%3B")
   }
 
   signal previewReady(string path)
@@ -2365,7 +2389,8 @@ Item {
 
   function runRow(row, item, screen) {
     if (row.kind === "window") {
-      bringForward(row.toplevel, screen)
+      // (The menu can outlive its window: a closed one is skipped.)
+      if (ToplevelManager.toplevels.values.indexOf(row.toplevel) !== -1) bringForward(row.toplevel, screen)
       return
     }
     switch (row.act) {
@@ -3150,8 +3175,12 @@ Item {
         return windows.concat(others)
       }
 
-      // What identifies a row (two rows of one menu never look alike, except windows with the same title).
+      // What identifies a row (windows by their own address: two can share a title).
       function rowKey(r) {
+        if (r.kind === "window") {
+          var address = r.toplevel ? root.hyprAddressFor(r.toplevel) : ""
+          return "window|" + (address || win.menuList.indexOf(r))
+        }
         return [r.kind, r.label || "", r.act || "", r.page || "", r.key || "", r.value || ""].join("|")
       }
       function keyMenuIndex(rows) {
@@ -4690,6 +4719,7 @@ Item {
                   elide: menuRow.isText ? Text.ElideNone : Text.ElideRight
                   wrapMode: menuRow.isText ? Text.WordWrap : Text.NoWrap
                   text: menuRow.modelData.label || ""
+                  textFormat: Text.PlainText
                   color: menuRow.modelData.danger ? Commons.Color.urgent : Commons.Color.popups.text
                   opacity: menuRow.modelData.disabled ? 0.4 : menuRow.modelData.secondary ? 0.65 : 1
                   font.family: root.uiFont
@@ -5117,6 +5147,7 @@ Item {
             id: tipLabel
             anchors.centerIn: parent
             text: win.tipText
+            textFormat: Text.PlainText
             color: Commons.Color.popups.text
             font.family: root.uiFont
             font.pixelSize: root.uiFontSize - 1

@@ -143,6 +143,7 @@ PopupWindow {
 
       Text {
         text: stack.folder ? stack.folder.name : ""
+        textFormat: Text.PlainText
         color: Commons.Color.popups.text
         font.family: stack.dock.uiFont
         font.pixelSize: stack.dock.uiFontSize + 1

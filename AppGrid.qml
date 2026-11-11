@@ -43,8 +43,7 @@ Scope {
       if (!e || e.noDisplay || !e.name) continue
       out.push({ entry: e, id: String(e.id), name: String(e.name),
                  lower: String(e.name).toLowerCase(),
-                 extra: [e.genericName, e.comment].concat(e.keywords || []).join(" ").toLowerCase(),
-                 icons: grid.dock.iconCandidatesFor(e, String(e.id)) })
+                 extra: [e.genericName, e.comment].concat(e.keywords || []).join(" ").toLowerCase() })
     }
     out.sort(function(a, b) { return a.name.localeCompare(b.name) })
     return out
@@ -225,7 +224,11 @@ Scope {
           readonly property bool current: GridView.isCurrentItem
           width: appsView.cellWidth
           height: appsView.cellHeight
-          readonly property string iconUrl: grid.dock.pickIcon(modelData.icons)
+          // Worked out here, not when the grid opens, so the icon follows the lookup's answers
+          // (and a candidate that turns out broken is skipped), as on the dock itself.
+          readonly property string iconUrl: grid.dock.pickIcon(grid.dock.iconCandidatesFor(modelData.entry, modelData.id))
+          onIconUrlChanged: grid.dock.requestMeasurement(iconUrl)
+          Component.onCompleted: grid.dock.requestMeasurement(iconUrl)
 
           Rectangle {
             anchors.fill: parent
@@ -244,7 +247,7 @@ Scope {
             height: 64
             sourceSize.width: 128
             sourceSize.height: 128
-            source: cellItem.iconUrl === grid.dock.letterIcon ? "" : cellItem.iconUrl
+            source: grid.dock.displayableIcon(cellItem.iconUrl)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -265,6 +268,7 @@ Scope {
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
             text: cellItem.modelData.name
+            textFormat: Text.PlainText
             color: Commons.Color.popups.text
             font.family: grid.dock.uiFont
             font.pixelSize: grid.dock.uiFontSize - 1

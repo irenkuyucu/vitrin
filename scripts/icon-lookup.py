@@ -39,7 +39,7 @@ class Theme:
         self.roots = [os.path.join(b, name) for b in bases if os.path.isdir(os.path.join(b, name))]
         self.inherits = []
         self.subdirs = []     # (subdir, size, scale, type, min, max, threshold)
-        self.files = {}       # (root, subdir) -> set of file names, read on first use
+        self.files = {}       # (root, subdir) -> (folder's mtime, set of file names), read on first use
         index = None
         for r in self.roots:
             if os.path.isfile(os.path.join(r, "index.theme")):
@@ -73,13 +73,22 @@ class Theme:
             self.subdirs.append((d, size, scale, kind, lo, hi, threshold))
 
     def listing(self, root, subdir):
+        # Read again when the folder changed (an app installed or removed since), so icons
+        # that arrive while the dock runs are found.
         key = (root, subdir)
-        if key not in self.files:
+        path = os.path.join(root, subdir)
+        try:
+            stamp = os.stat(path).st_mtime_ns
+        except OSError:
+            stamp = None
+        cached = self.files.get(key)
+        if cached is None or cached[0] != stamp:
             try:
-                self.files[key] = set(os.listdir(os.path.join(root, subdir)))
+                names = set(os.listdir(path))
             except OSError:
-                self.files[key] = set()
-        return self.files[key]
+                names = set()
+            cached = self.files[key] = (stamp, names)
+        return cached[1]
 
     @staticmethod
     def distance(entry):

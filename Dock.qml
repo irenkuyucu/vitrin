@@ -734,7 +734,15 @@ Item {
     running: true
     stdinEnabled: true
     command: ["python3", "-I", root.script("icon-lookup.py")]
-    onRunningChanged: if (running) Qt.callLater(root.askForIcons)
+    property double startedAt: 0
+    property int quickDeaths: 0            // stops soon after starting, in a row (see iconToolDied)
+    property bool restarted: false
+    onRunningChanged: if (running) {
+      startedAt = Date.now()
+      Qt.callLater(root.askForIcons)
+      if (restarted) iconRefresh.restart()   // (a new one knows nothing: everything in use is asked again)
+    }
+    onExited: root.iconToolDied(iconLookup)
     stdout: SplitParser {
       onRead: function(line) {
         if (line === "@done") {
@@ -752,13 +760,53 @@ Item {
 
   // Prints "icon-theme: '<name>'" whenever the setting changes.
   Process {
+    id: themeMonitor
     running: true
     command: ["gsettings", "monitor", "org.gnome.desktop.interface", "icon-theme"]
+    property double startedAt: 0
+    property int quickDeaths: 0
+    property bool restarted: false
+    onRunningChanged: if (running) {
+      startedAt = Date.now()
+      if (restarted) themeGetter.running = true   // (the theme may have changed while it was down)
+    }
+    onExited: root.iconToolDied(themeMonitor)
     stdout: SplitParser {
       onRead: function(line) {
         var m = String(line).match(/icon-theme:\s*'([^']*)'/)
         if (m) root.useIconTheme(m[1])
       }
+    }
+  }
+
+  Process {
+    id: themeGetter
+    command: ["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var m = String(text).match(/'([^']*)'/)
+        if (m) root.useIconTheme(m[1])
+      }
+    }
+  }
+
+  // The icon lookup and the theme monitor run for as long as the dock does. If one stops, it's
+  // started again after a moment; one that keeps stopping right after it starts is left alone.
+  function iconToolDied(tool) {
+    tool.quickDeaths = Date.now() - tool.startedAt < 10000 ? tool.quickDeaths + 1 : 0
+    if (tool.quickDeaths >= 5) {
+      console.warn(root.pluginId + ": " + tool.command[0] + " keeps stopping; not starting it again")
+      return
+    }
+    tool.restarted = true
+    iconToolsRestart.restart()
+  }
+  Timer {
+    id: iconToolsRestart
+    interval: 2000
+    onTriggered: {
+      if (!iconLookup.running && iconLookup.quickDeaths < 5) iconLookup.running = true
+      if (!themeMonitor.running && themeMonitor.quickDeaths < 5) themeMonitor.running = true
     }
   }
 

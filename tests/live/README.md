@@ -1,44 +1,56 @@
 # Live checks
 
-What can't run unattended: drags, menus, hover timing and a reloaded shell. These are checked
-on the real desktop after a change, with a screenshot (`grim`) as the evidence.
+Some behavior can only be checked on a running desktop: drags, menus, hover timing, a reloaded
+shell. After a change that touches it, check it on a real session and keep a screenshot as the
+evidence. The automated suite is described in `../README.md`.
 
 ## Tools
 
-- `vptr.py`: a pointer made of nothing but the Wayland wire protocol (Hyprland offers
-  `zwlr_virtual_pointer` to any client). Move, click and drag with real button presses:
+- `vptr.py` moves, clicks and drags a virtual pointer with real button presses. It speaks the
+  Wayland `zwlr_virtual_pointer` protocol directly, which Hyprland offers to any client, so
+  nothing needs installing. The first two arguments are the output's size in pixels:
 
-      python3 -I tests/live/vptr.py 1440 900 click 923 857
-      python3 -I tests/live/vptr.py 1440 900 drag 775 705 783 857 2800 780 575
+      python3 tests/live/vptr.py 1440 900 click 923 857
+      python3 tests/live/vptr.py 1440 900 drag 775 705 783 857 2800 780 575
 
   `drag X1 Y1 X2 Y2 [hold_ms [X3 Y3]]` presses at the first point, moves to the second, holds
-  (the dock's spring-loading needs a second), then slides to the optional third point before
-  letting go, so nothing is dropped on the target. The first two numbers are the output size.
-- `grim -g "X,Y WxH" shot.png` for a screenshot of a region (not with `-o`).
-- `hyprctl clients -j`, `hyprctl layers`, `hyprctl monitors -j` to check state.
-- `wtype -k KEY` for keys. Never `Escape` unless the dock's keyboard mode is on: it goes
-  to the focused terminal. Leave the mode with `omarchy-shell vitrin focus`.
+  there (spring-loading needs a second), then slides to the optional third point before letting
+  go, so nothing is dropped on the target. Coordinates depend on your screen and dock layout.
+- `grim -g "X,Y WxH" shot.png` takes a screenshot of a region (it can't be combined with `-o`).
+- `hyprctl clients -j`, `hyprctl layers` and `hyprctl monitors -j` show window and layer state.
+- `wtype -k KEY` sends a key to whichever window has focus. Be careful with `Escape` unless
+  the dock's keyboard mode is on: it goes to your terminal. `omarchy-shell vitrin focus` leaves
+  the mode.
+
+## Before testing
+
+Back up `~/.config/omarchy/vitrin.json`. Any app that runs under the dock is added to its
+recent-apps section, which keeps three and drops the oldest, so a test window pushes out your
+own apps and that can't be undone afterwards. When you're done, close the test windows (by
+address, `hyprctl dispatch "hl.dsp.window.close({ window = \"address:0x...\" })"`), remove
+the test entries from the config, and look at the dock.
 
 ## After a change
 
 1. `omarchy restart shell`, then `hyprctl layers | grep vitrin` shows the dock's layer.
 2. The shell log has no `load failed`, `TypeError` or `ReferenceError`.
-3. Exercise what changed, in the real dock. Use scratch windows and folders, remove them
-   after, and put the config back (the file is `~/.config/omarchy/vitrin.json`; back it up
-   first when a test edits it).
+3. Exercise what changed, with scratch windows and folders.
 
-## Per feature
+## Checks per feature
 
-- Spring-loading: minimize a window (move it to `special:minimized`), open a stack, drag a
+- **Spring-loading:** minimize a window (move it to `special:minimized`), open a stack, drag a
   tile onto the app's icon and hold: the window comes back to the current workspace.
-- Missing folder: add a shortcut to a path that doesn't exist (badge shown), create it (badge
-  gone), delete it (badge back); try a path several levels down.
-- Icons of apps installed meanwhile: install or remove a desktop entry and its icon, wait a
-  few seconds, look at the dock and the app grid.
-- Helper processes: kill `icon-lookup.py` and `gsettings monitor` by their exact PIDs; both
+- **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),
+  create it (the badge goes), delete it (the badge returns); try a path several levels down.
+- **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`
+  (the window a crash notification opens). It joins your terminal's icon, and no extra icon
+  appears, not even briefly.
+- **Icons of apps installed meanwhile:** install or remove a desktop entry and its icon, wait a
+  few seconds, then look at the dock and the app grid.
+- **Helper processes:** kill `icon-lookup.py` and `gsettings monitor` by their exact PIDs; both
   come back within a couple of seconds.
 
-## Careful with
+## Pitfalls
 
-- `pkill -f` and `pgrep -f` with a pattern that also appears in your own command line match
-  your own shell. Use exact PIDs or an anchored pattern (`^/usr/bin/gsettings monitor`).
+- `pkill -f` and `pgrep -f` match the whole command line, including your own shell's if it
+  contains the pattern. Use exact PIDs or an anchored pattern.

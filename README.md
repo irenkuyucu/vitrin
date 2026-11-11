@@ -188,6 +188,10 @@ Vitrin is a regular Omarchy plugin: `manifest.json`, the QML files, and helper s
 omarchy restart shell
 ```
 
+`tests/run.sh` runs the automated checks (about ten seconds, no desktop needed). See
+[tests/README.md](tests/README.md) for what it covers and `tests/live/README.md` for the checks
+done on a running session.
+
 ## License
 
 Vitrin is released under the [MIT License](LICENSE).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs every check that doesn't need the desktop: syntax of all files, qmllint against its
-# baseline, and the script tests. Usage: tests/run.sh   (from anywhere)
+# baseline, the script tests and the QML logic tests. Usage: tests/run.sh   (from anywhere)
 # Live checks (drags, menus, a reloaded shell) are listed in tests/live/README.md.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -32,6 +32,14 @@ python3 -I tests/lint_baseline.py || fail qmllint
 step "script tests"
 PYTHONDONTWRITEBYTECODE=1 python3 -I -m unittest discover -s tests -p 'test_*.py' 2>&1 | tail -n 40
 [ "${PIPESTATUS[0]}" = 0 ] || fail "script tests"
+
+step "QML logic tests"
+if command -v node >/dev/null; then
+  node --test tests/logic/ 2>&1 | grep -E '^\s*(✖|not ok)|^ℹ (tests|pass|fail)|Error' | head -n 40
+  [ "${PIPESTATUS[0]}" = 0 ] || fail "QML logic tests"
+else
+  echo "node is missing: skipped"
+fi
 
 echo
 if [ "$failed" = 0 ]; then echo "ALL CHECKS PASSED"; else echo "SOME CHECKS FAILED"; fi

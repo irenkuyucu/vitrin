@@ -239,7 +239,7 @@ Item {
         return
       }
       for (var i = 0; i < windows.length; i++) if (windows[i].activated) return   // already in front
-      button.dock.focusWindow(windows[0], button.window.screen)
+      button.dock.bringForward(windows[0], button.window.screen)
     }
   }
 

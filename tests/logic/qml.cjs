@@ -83,15 +83,37 @@ function scanFunctions(src) {
 
 const SCOPES = { 2: "root", 6: "win" };
 
+// The constants of the root item: `readonly property var hiddenAppIds: ["a", "b"]`, numbers,
+// strings and booleans written as literals. A test then runs with the shipped values.
+function scanConstants(src) {
+  const found = {};
+  const start = /^  (?:readonly )?property (?:var|int|real|string|bool) (\w+): (?=[\[\d"'tf-])/gm;
+  let m;
+  while ((m = start.exec(src))) {
+    const at = m.index + m[0].length;
+    let end;
+    if (src[at] === "[") {
+      let depth = 0;
+      end = at;
+      do { if (src[end] === "[") depth++; else if (src[end] === "]") depth--; end++; } while (depth > 0 && end < src.length);
+    } else {
+      end = src.indexOf("\n", at);
+    }
+    const text = src.slice(at, end).replace(/\/\/.*$/gm, "").trim();
+    try { found[m[1]] = new Function("return (" + text + ")")(); } catch (e) { /* not a plain literal */ }
+  }
+  return found;
+}
+
 const scanned = new Map();      // (a file is read and scanned once per run)
 
 function load(file, { winId = "win", rootId = "root", globals = {} } = {}) {
   if (!scanned.has(file)) {
     const text = fs.readFileSync(path.join(REPO, file), "utf8");
-    scanned.set(file, { text, fns: scanFunctions(text).filter(f => !f.typed && !/^on[A-Z]/.test(f.name)) });
+    scanned.set(file, { text, constants: scanConstants(text), fns: scanFunctions(text).filter(f => !f.typed && !/^on[A-Z]/.test(f.name)) });
   }
-  const { text: src, fns } = scanned.get(file);
-  const root = {};
+  const { text: src, fns, constants } = scanned.get(file);
+  const root = JSON.parse(JSON.stringify(constants));      // (a fresh copy for every test)
   const win = {};
   // What a function can see besides the item's own properties: the ids around it and the
   // QML/Quickshell globals. A test adds or replaces these on env.globals.
@@ -101,7 +123,7 @@ function load(file, { winId = "win", rootId = "root", globals = {} } = {}) {
     [winId]: win,
     ...globals,
   };
-  const env = { root, win, globals: g, functions: fns, src };
+  const env = { root, win, globals: g, functions: fns, constants, src };
   for (const f of fns) {
     const scope = SCOPES[f.indent];
     if (!scope) continue;

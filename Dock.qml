@@ -1101,7 +1101,7 @@ Item {
 
   // Open windows grouped by app: { byKey: { key: [toplevel, ...] }, order: [key, ...] }.
   readonly property var groups: computeGroups(ToplevelManager.toplevels.values, DesktopEntries.applications.values,
-    root.effectiveAliases, root.windowHints, root.launcherOf, root.hintClock)
+    root.effectiveAliases, root.windowHints, root.launcherOf, root.hintClock, root.windowsSettled)
 
   // A window waits at most this long (ms) for its process to be asked (see computeGroups); the
   // clock ticks while any wait is on, so one that runs out is noticed.
@@ -1114,8 +1114,35 @@ Item {
     onTriggered: root.hintClock++
   }
 
-  // Windows that aren't apps to the user, never shown in the dock: Omarchy's screensaver.
-  readonly property var hiddenAppIds: ["org.omarchy.screensaver"]
+  // Windows that aren't apps to the user, never shown in the dock: Omarchy's screensaver and
+  // the webcam overlay it shows over screen recordings.
+  readonly property var hiddenAppIds: ["org.omarchy.screensaver", "WebcamOverlay-small",
+    "WebcamOverlay-medium", "WebcamOverlay-large"]
+
+  // An entry marked NoDisplay ("not an app to show") belongs to a helper: the portal's file chooser,
+  // previewers, password prompts. Their windows stay out of the dock, as in Omarchy's own. A few
+  // such entries are apps you open files in all the same, so their windows stay.
+  readonly property var noDisplayApps: ["imv", "imv-dir", "gcr-viewer"]
+
+  function isHelperEntry(entry) {
+    if (!entry || !entry.noDisplay) return false
+    var id = String(entry.id)
+    return root.noDisplayApps.indexOf(id) === -1 && root.pins.indexOf(id) === -1      // (a pin is a choice)
+  }
+
+  // Only for a window that matches its entry for certain (a guess could pick a helper's entry by
+  // accident), and not one given an alias in the config file, which is a choice too.
+  function isHelperWindow(appId) {
+    return root.aliases[appId] === undefined && isHelperEntry(certainEntryFor(appId))
+  }
+
+  // For a key kept in the middle section: a helper's entry id, or an id that an alias sends to
+  // another app now (a leftover from before it was known).
+  function isStaleKey(key) {
+    if (isHelperEntry(DesktopEntries.byId(key))) return true
+    var to = root.effectiveAliases[key]
+    return to !== undefined && to !== key
+  }
 
   // Window ids that many apps share, so they say nothing about which app a window is: those of
   // terminal apps added with Omarchy's TUI installer (omarchy-tui-install), e.g. Docker
@@ -1322,10 +1349,12 @@ Item {
     return id && DesktopEntries.byId(id) ? id : ""
   }
 
-  function computeGroups(toplevels, _apps, _aliases, _hints, _launchers, _clock) {
+  function computeGroups(toplevels, _apps, _aliases, _hints, _launchers, _clock, _settled) {
     var byKey = Object.create(null)      // (no inherited names: an app id can be "constructor")
     var order = []
     var pending = false                  // some windows are left out for now (see sharedAppIds, unmatched ones)
+    // Right after startup the app list can still be empty, and every window would look unmatched.
+    var entriesMissing = !!_apps && _apps.length === 0 && !root.windowsSettled
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
       if (!t || !t.appId || root.hiddenAppIds.indexOf(t.appId) !== -1) continue
@@ -1346,6 +1375,8 @@ Item {
         // under its real app (a terminal window opened by a notification, say). It never waits
         // longer than hintWaitMax, whatever happens to the question.
         var id = owner.appId || t.appId
+        if (isHelperWindow(id)) continue
+        if (entriesMissing) { pending = true; continue }
         var target = root.effectiveAliases[id] || id
         if (!certainEntryFor(target) && root.windowHints[target] === undefined) {
           var since = root.firstSeen[target]
@@ -1438,6 +1469,7 @@ Item {
     for (var i = 0; i < toplevels.length; i++) {
       var appId = toplevels[i] && toplevels[i].appId
       if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
+      if (root.hiddenAppIds.indexOf(appId) !== -1) continue
       var target = root.effectiveAliases[appId] || appId
       open[target] = true
       if (certainEntryFor(target)) continue
@@ -1514,6 +1546,7 @@ Item {
     for (var i = 0; i < root.middle.length; i++) {
       var key = root.middle[i]
       if (pinned.indexOf(key) !== -1 || middle.indexOf(key) !== -1) continue
+      if (!running[key] && isStaleKey(key)) continue
       if (running[key]) {
         delete quitAt[key]
       } else {

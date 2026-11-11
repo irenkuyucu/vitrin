@@ -37,7 +37,8 @@ omarchy plugin remove vitrin
   You can pin apps to keep them in the dock, and drag icons to reorder them, or drag one up
   and out of the dock to remove it. Apps you haven't pinned sit in their own section: the
   ones that are running, plus the last three you closed. Drag one among your pinned apps to
-  keep it.
+  keep it. Windows that aren't apps to you, like file chooser dialogs, previews, password
+  prompts and Omarchy's screensaver, don't get an icon.
 - **Window management**: Right-click an app to see its windows. A check mark shows the one you used last.
   Minimized and hidden windows are marked with a diamond, clicking on one will bring it back to the workspace you're on.
   Windows can only be minimized on floating workspaces.

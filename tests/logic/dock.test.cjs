@@ -15,6 +15,7 @@ function dock(overrides = {}) {
     Util: { fileUrl: p => "file://" + p },
     configFile: { setText: t => calls.push(["write", t]) },
     ToplevelManager: { toplevels: { values: [] } },
+    DesktopEntries: { byId: id => (overrides.entries || {})[id] || null },
     menuColumn: { windowRows: [] },
     windowList: { contentY: 0, height: 320 },
     console: { warn: m => calls.push(["warn", m]), log: () => {}, error: () => {} },
@@ -22,6 +23,7 @@ function dock(overrides = {}) {
   };
   const env = load("Dock.qml", { globals });
   const r = env.root;
+  const real = Object.assign({}, r);          // (functions a test wants to run for real, see overrides.keep)
   Object.assign(r, {
     pluginId: "vitrin", home: "/home/u", configPath: "/home/u/.config/omarchy/vitrin.json",
     fixedApp: "files", knownFileManagers: ["org.gnome.Nautilus", "thunar"], appsKey: "vitrin:apps", showApps: true,
@@ -30,7 +32,8 @@ function dock(overrides = {}) {
     pins: ["files"], folders: [], middle: [], recentQuitAt: {}, trashName: "Trash",
     configLoaded: true, configBroken: false, configFinalCheck: false,
     iconSize: 52, spacingBaseSize: 52, baseGap: 15, baseEnds: 15, dividerGapRatio: 1.375,
-    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}),
+    windowHints: {}, firstSeen: {}, hintWaitMax: 2000, certainEntryFor: () => ({}), windowsSettled: true,
+    noDisplayApps: ["imv", "imv-dir", "gcr-viewer"], recentMax: 3, showRecent: true, layout: [],
     iconExtents: {}, themeIcons: {}, iconsWanted: {}, letterIcon: "vitrin:letter", appsIcon: "vitrin:apps", launcherOf: {},
     // effects
     syncLayout: () => calls.push(["syncLayout"]),
@@ -38,6 +41,7 @@ function dock(overrides = {}) {
     currentSettings: () => ({}),
     ...overrides.root,
   });
+  for (const name of overrides.keep || []) r[name] = real[name];
   env.calls = calls;
   return env;
 }
@@ -123,6 +127,53 @@ describe("computeGroups", () => {
     assert.equal(env.root.computeGroups([{ appId: "odd" }]).pending, false);
   });
 
+  describe("helper windows", () => {
+    const entries = { portal: { id: "xdg-desktop-portal-gtk", noDisplay: true }, imv: { id: "imv", noDisplay: true },
+      gedit: { id: "gedit", noDisplay: false } };
+    const setup = (extra = {}) => {
+      const e = dock({ root: { keyFor: id => id, certainEntryFor: id => entries[id] || null, ...extra } });
+      return e;
+    };
+
+    it("leaves out a window whose entry says NoDisplay", () => {
+      const g = setup().root.computeGroups([{ appId: "portal" }, { appId: "gedit" }]);
+      assert.deepEqual(g.order, ["gedit"]);
+    });
+
+    it("keeps one that is pinned, a file viewer, or given an alias by the user", () => {
+      assert.deepEqual(setup({ pins: ["files", "xdg-desktop-portal-gtk"] }).root.computeGroups([{ appId: "portal" }]).order, ["portal"]);
+      assert.deepEqual(setup().root.computeGroups([{ appId: "imv" }]).order, ["imv"]);
+      assert.deepEqual(setup({ aliases: { portal: "x" } }).root.computeGroups([{ appId: "portal" }]).order, ["portal"]);
+    });
+
+    it("doesn't leave out a window only guessed to belong to such an entry", () => {
+      const e = setup({ certainEntryFor: () => null, windowHints: { guess: { exe: "/usr/bin/x" } }, keyFor: () => "xdg-desktop-portal-gtk" });
+      assert.deepEqual(e.root.computeGroups([{ appId: "guess" }]).order, ["xdg-desktop-portal-gtk"]);
+    });
+
+    it("leaves out the webcam overlay and the screensaver by their ids (the shipped list)", () => {
+      const e = setup({ hiddenAppIds: undefined });
+      delete e.root.hiddenAppIds;
+      const ids = ["WebcamOverlay-small", "WebcamOverlay-medium", "WebcamOverlay-large", "org.omarchy.screensaver"];
+      for (const id of ids) assert.ok(e.constants.hiddenAppIds.includes(id), id);
+      e.root.hiddenAppIds = e.constants.hiddenAppIds;
+      assert.deepEqual(e.root.computeGroups(ids.map(appId => ({ appId }))).order, []);
+    });
+
+    it("keeps the file viewers in the shipped exception list", () => {
+      assert.deepEqual(setup().constants.noDisplayApps, ["imv", "imv-dir", "gcr-viewer"]);
+    });
+
+    it("waits while the list of apps hasn't loaded yet, but not for ever", () => {
+      const e = setup({ windowsSettled: false });
+      const early = e.root.computeGroups([{ appId: "gedit" }], []);
+      assert.equal(early.pending, true);
+      assert.deepEqual(early.order, []);
+      e.root.windowsSettled = true;
+      assert.deepEqual(e.root.computeGroups([{ appId: "gedit" }], []).order, ["gedit"]);
+    });
+  });
+
   it("waits for windows under a shared id until their entry is known", () => {
     env.root.sharedKeyFor = () => null;
     const g = env.root.computeGroups([{ appId: "TUI.tile" }, { appId: "a" }]);
@@ -130,6 +181,49 @@ describe("computeGroups", () => {
     assert.deepEqual(g.order, ["a"]);
     env.root.sharedKeyFor = () => "lazydocker";
     assert.deepEqual(env.root.computeGroups([{ appId: "TUI.tile" }]).order, ["lazydocker"]);
+  });
+});
+
+// ------------------------------------------------------------------ the middle section
+
+describe("syncLayout", () => {
+  const setup = (extra = {}, entries = {}) => {
+    const env = dock({ entries, keep: ["syncLayout"], root: {
+      groups: { byKey: Object.create(null), order: [], pending: false },
+      middle: [], recentQuitAt: {}, effectiveAliases: {}, ...extra } });
+    env.root.saveConfig = () => {};
+    return env;
+  };
+
+  it("forgets a helper's icon and an id an alias sends elsewhere", () => {
+    const env = setup({ middle: ["xdg-desktop-portal-gtk", "org.omarchy.agent", "WhatsApp"],
+      effectiveAliases: { "org.omarchy.agent": "com.mitchellh.ghostty" } },
+      { "xdg-desktop-portal-gtk": { id: "xdg-desktop-portal-gtk", noDisplay: true } });
+    env.root.syncLayout();
+    assert.deepEqual(env.root.middle, ["WhatsApp"]);
+  });
+
+  it("keeps a running app even if its key looks stale", () => {
+    const byKey = Object.create(null);
+    byKey["org.omarchy.agent"] = [{}];
+    const env = setup({ middle: ["org.omarchy.agent"], groups: { byKey, order: ["org.omarchy.agent"], pending: false },
+      effectiveAliases: { "org.omarchy.agent": "x" } });
+    env.root.syncLayout();
+    assert.deepEqual(env.root.middle, ["org.omarchy.agent"]);
+  });
+
+  it("keeps up to three quit apps and drops the one that quit longest ago", () => {
+    const env = setup({ middle: ["a", "b", "c", "d"], recentQuitAt: { a: 1, b: 2, c: 3, d: 4 } });
+    env.root.syncLayout();
+    assert.deepEqual(env.root.middle, ["b", "c", "d"]);
+  });
+
+  it("adds newly opened apps at the right end", () => {
+    const byKey = Object.create(null);
+    byKey.n = [{}];
+    const env = setup({ middle: ["a"], recentQuitAt: { a: 5 }, groups: { byKey, order: ["n"], pending: false } });
+    env.root.syncLayout();
+    assert.deepEqual(env.root.middle, ["a", "n"]);
   });
 });
 

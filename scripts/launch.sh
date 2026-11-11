@@ -18,8 +18,12 @@ action=""
 if [[ $id == *:* ]]; then action="${id##*:}"; id="${id%:*}"; fi
 
 file=""
-for d in "${XDG_DATA_HOME:-$HOME/.local/share}/applications" /usr/local/share/applications /usr/share/applications \
-         "$HOME/.local/share/flatpak/exports/share/applications" /var/lib/flatpak/exports/share/applications; do
+dirs=("${XDG_DATA_HOME:-$HOME/.local/share}/applications")
+IFS=: read -ra data_dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+for d in "${data_dirs[@]}"; do [ -n "$d" ] && dirs+=("$d/applications"); done
+dirs+=(/usr/local/share/applications /usr/share/applications \
+       "$HOME/.local/share/flatpak/exports/share/applications" /var/lib/flatpak/exports/share/applications)
+for d in "${dirs[@]}"; do
   if [ -f "$d/$id.desktop" ]; then file="$d/$id.desktop"; break; fi
 done
 

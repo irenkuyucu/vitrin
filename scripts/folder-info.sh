@@ -3,7 +3,8 @@
 # shows them). Usage: folder-info.sh <path>...
 #
 # Prints one line per folder (other paths are skipped):
-#   <path>\t<display name>\t<icon names, comma-separated, best first>
+#   <path> <display name> <icon names, comma-separated, best first>
+# each followed by a NUL byte, so paths with tabs or newlines come through whole.
 set -u
 for p in "$@"; do
   [ -d "$p" ] || continue
@@ -11,5 +12,5 @@ for p in "$@"; do
   name=$(sed -n 's/^ *standard::display-name: //p' <<<"$info" | head -n 1)
   icons=$(sed -n 's/^ *standard::icon: //p' <<<"$info" | head -n 1 | tr -d ' ')
   [ -n "$name" ] || name=$(basename -- "$p")
-  printf '%s\t%s\t%s\n' "$p" "$name" "${icons:-folder}"
+  printf '%s\0%s\0%s\0' "$p" "$name" "${icons:-folder}"
 done

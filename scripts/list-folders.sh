@@ -28,7 +28,7 @@ for dir in "$@"; do
       find "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' ! -name '*~' ! -name '*.part' ! -name '*.crdownload' ! -name '*.download' \
         -print0 2>/dev/null \
       | xargs -0 -r stat --printf '%i %.9W %.9Y %.9Z %n\0' -- 2>/dev/null \
-      | awk -v cache="$cache" '
+      | awk -v cache="$cache" -v tmp="$cache.tmp.$$" '
           BEGIN {
             RS = "\n"      # the cache: one "<inode>:<created>\t<added>" line per file
             while ((getline line < cache) > 0) { split(line, f, "\t"); known[f[1]] = f[2] }
@@ -47,12 +47,11 @@ for dir in "$@"; do
             printf "%s\t%s\0", added, path
           }
           END {
-            tmp = cache ".tmp"
             for (k in seen) printf "%s\t%s\n", k, seen[k] > tmp
             close(tmp)
           }' \
       | sort -z -t $'\t' -k1,1 -rn)
-    [ -f "$cache.tmp" ] && mv -f "$cache.tmp" "$cache"
+    [ -f "$cache.tmp.$$" ] && mv -f "$cache.tmp.$$" "$cache"
     # How many there are in all (for "Newest 1,000 of 4,577"), as a record of its own.
     printf '%s\t#total\t%s\0' "$i" "${#sorted[@]}"
     paths=()

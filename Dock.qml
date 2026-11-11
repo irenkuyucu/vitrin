@@ -2853,11 +2853,9 @@ Item {
         stdout: StdioCollector {
           onStreamFinished: {
             var folders = []
-            var lines = text.split("\n")
-            for (var i = 0; i < lines.length; i++) {
-              var f = lines[i].split("\t")
-              if (f.length < 3) continue
-              folders.push({ path: f[0], name: f[1], icons: f[2].split(",") })
+            var fields = String(text).split("\u0000")      // path, name, icons, path, name, icons, ...
+            for (var i = 0; i + 2 < fields.length; i += 3) {
+              folders.push({ path: fields[i], name: fields[i + 1], icons: fields[i + 2].split(",") })
             }
             win.dropInfo = { key: folderInfo.key, folders: folders }
             if (win.pendingInsert !== -2) {

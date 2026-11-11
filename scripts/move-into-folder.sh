@@ -8,7 +8,7 @@ dest="$1"; shift
 dev=$(stat -c %d -- "$dest")
 real_dest=$(cd -- "$dest" && pwd -P)
 for src in "$@"; do
-  [ -e "$src" ] || continue
+  [ -e "$src" ] || [ -L "$src" ] || continue
   [ "$(cd -- "$(dirname -- "$src")" && pwd -P)" = "$real_dest" ] && continue
   # A folder can't go into itself or one of its own subfolders.
   if [ -d "$src" ]; then
@@ -18,7 +18,7 @@ for src in "$@"; do
   name=$(basename -- "$src"); base="$name"; ext=""
   if [ ! -d "$src" ] && [ "${name#?*.}" != "$name" ]; then base="${name%.*}"; ext=".${name##*.}"; fi
   target="$dest/$name"; n=2
-  while [ -e "$target" ]; do target="$dest/$base $n$ext"; n=$((n+1)); done
+  while [ -e "$target" ] || [ -L "$target" ]; do target="$dest/$base $n$ext"; n=$((n+1)); done
   if [ "$(stat -c %d -- "$src")" = "$dev" ]; then mv -n -- "$src" "$target"
   else cp -a -n -- "$src" "$target"; fi
 done

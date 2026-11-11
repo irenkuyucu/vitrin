@@ -37,10 +37,37 @@ exec_for() {
   done
 }
 
+# Splits a desktop-file Exec line into the words array, honouring double quotes (with \ for
+# a literal quote, backslash, $ or backtick inside them).
+split_exec() {
+  local s=$1 w="" quoted=0 started=0 c i
+  words=()
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    if ((quoted)); then
+      case $c in
+        '"') quoted=0 ;;
+        '\') i=$((i + 1)); w+=${s:i:1} ;;
+        *) w+=$c ;;
+      esac
+    else
+      case $c in
+        '"') quoted=1; started=1 ;;
+        ' '|$'\t') if ((started)); then words+=("$w"); w=""; started=0; fi ;;
+        *) w+=$c; started=1 ;;
+      esac
+    fi
+  done
+  ((started)) && words+=("$w")
+  return 0
+}
+
 # The Thumb::MTime a preview was stamped with (empty if none).
 stamped_mtime() {
   grep -a -o -m 1 'Thumb::MTime.[0-9]*' "$1" 2>/dev/null | tr -dc '0-9'
 }
+
+shopt -u patsub_replacement 2>/dev/null   # (bash 5.2+: a "&" in a path would mean the matched text)
 
 one() {
   local mime=$1 path=$2 uri=$3 hash=$4 mtime f exec tmp args=() word
@@ -54,7 +81,7 @@ one() {
   exec=$(exec_for "$mime")
   if [ -z "$exec" ]; then echo "$hash none"; return; fi
   tmp=$(mktemp --suffix=.png "$cache/large/.vitrin-XXXXXX") || return
-  read -ra words <<< "$exec"
+  split_exec "$exec"
   for word in "${words[@]}"; do
     word=${word//%i/$path}; word=${word//%u/$uri}; word=${word//%o/$tmp}; word=${word//%s/256}
     args+=("$word")

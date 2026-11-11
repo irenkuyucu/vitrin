@@ -18,11 +18,10 @@ value() {   # "bool: false" / "int: 1" -> false / 1
   hyprctl getoption "$1" 2>/dev/null | head -n 1 | sed 's/^[a-z]*: *//'
 }
 
-set_option() {   # name value, with a Lua config (eval) or a classic one (keyword)
+set_option() {   # name value, with a Lua config (eval) or a classic one (keyword); fails if neither took
   local section=${1%%:*} key=${1#*:}
-  if ! hyprctl eval "hl.config({ $section = { $key = $2 } })" 2>/dev/null | grep -q '^ok'; then
-    hyprctl keyword "$1" "$2" >/dev/null 2>&1
-  fi
+  hyprctl eval "hl.config({ $section = { $key = $2 } })" 2>/dev/null | grep -q '^ok' && return 0
+  hyprctl keyword "$1" "$2" 2>/dev/null | grep -q '^ok'
 }
 
 case "${1:-}" in
@@ -43,7 +42,11 @@ case "${1:-}" in
     ;;
   restore)
     [ -f "$state" ] || exit 0
-    while read -r o v; do [[ $v =~ ^(true|false|-?[0-9]+)$ ]] && set_option "$o" "$v"; done < "$state"
-    rm -f "$state"
+    failed=0
+    while read -r o v; do
+      [[ $v =~ ^(true|false|-?[0-9]+)$ ]] && { set_option "$o" "$v" || failed=1; }
+    done < "$state"
+    # Kept if any value didn't go back, so the next start can try again.
+    [ "$failed" = 0 ] && rm -f "$state"
     ;;
 esac

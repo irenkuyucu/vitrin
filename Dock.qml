@@ -2630,6 +2630,21 @@ Item {
     return title.length > 48 ? title.slice(0, 47) + "…" : title
   }
 
+  // Windows that have the same title (some apps title every window alike) get a number each, in
+  // the order of the list, so they can be told apart.
+  function numberSameLabels(rows) {
+    var total = {}
+    for (var i = 0; i < rows.length; i++) total[rows[i].label] = (total[rows[i].label] || 0) + 1
+    var seen = {}
+    for (var j = 0; j < rows.length; j++) {
+      var label = rows[j].label
+      if (total[label] < 2) continue
+      seen[label] = (seen[label] || 0) + 1
+      rows[j].label = label + " (" + seen[label] + ")"
+    }
+    return rows
+  }
+
   // Menu rows: { kind: "window" | "action" | "text" | "separator" | "submenu" | "back" |
   //              "choice", label, act, toplevel, current, disabled, danger, secondary,
   //              page, value, key, checked }
@@ -2667,6 +2682,7 @@ Item {
       var hidden = isHidden(w)
       windows.push({ kind: "window", label: windowLabel(w), toplevel: w, current: w === lead && !hidden, hidden: hidden })
     }
+    numberSameLabels(windows)
 
     var open = item.entry ? appActionRows(item) : []
 

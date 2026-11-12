@@ -276,6 +276,23 @@ describe("syncLayout", () => {
 
 // ------------------------------------------------------------------ pins
 
+describe("window titles in the menu", () => {
+  const env = dock();
+  const labels = rows => env.root.numberSameLabels(rows.map(label => ({ kind: "window", label }))).map(r => r.label);
+
+  it("get a number each when they're all alike", () => {
+    assert.deepEqual(labels(["Flea", "Flea", "Flea"]), ["Flea (1)", "Flea (2)", "Flea (3)"]);
+  });
+
+  it("are numbered only among the ones they repeat", () => {
+    assert.deepEqual(labels(["Flea", "notes.txt", "Flea", "other"]), ["Flea (1)", "notes.txt", "Flea (2)", "other"]);
+  });
+
+  it("are left alone when each is different", () => {
+    assert.deepEqual(labels(["a", "b"]), ["a", "b"]);
+  });
+});
+
 describe("Omarchy's colours", () => {
   const env = dock();
 

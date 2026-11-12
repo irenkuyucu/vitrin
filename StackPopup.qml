@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Hyprland
 import qs.Commons
@@ -108,24 +107,13 @@ PopupWindow {
     stack.tileMenuFile = file
   }
 
-  Rectangle {
+  Card {
     id: card
+    dock: stack.dock
     x: stack.dock.shadowPad
     y: stack.dock.shadowPad
     width: stack.columns * stack.tileWidth + 24
     height: content.implicitHeight + 24
-    color: stack.dock.surface
-    border.color: stack.dock.hairline
-    border.width: 1
-    radius: stack.dock.menuRadius
-
-    layer.enabled: true
-    layer.effect: MultiEffect {
-      shadowEnabled: true
-      shadowColor: Qt.rgba(0, 0, 0, 0.4)
-      shadowBlur: 0.6
-      shadowVerticalOffset: 2
-    }
 
     // Clicking empty space closes the per-file menu.
     MouseArea {

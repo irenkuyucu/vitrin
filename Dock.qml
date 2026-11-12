@@ -2309,8 +2309,6 @@ Item {
   // The answers are kept in previewKnown, a plain record that is changed in place: nothing
   // is bound to it, so a new answer doesn't make the dock or every tile re-evaluate. The
   // tile concerned is told through previewReady and looks its answer up itself.
-  readonly property string thumbnailCache: (Quickshell.env("XDG_CACHE_HOME") || (root.home + "/.cache")) + "/thumbnails"
-
   // The cache names a preview after the MD5 of the file's URI, escaped the GLib way.
   function fileUri(path) {
     return ("file://" + encodeURI(path)).replace(/#/g, "%23").replace(/\?/g, "%3F").replace(/;/g, "%3B")
@@ -2779,8 +2777,9 @@ Item {
       onWheel: function(w) { w.accepted = true }
     }
 
-    Rectangle {
+    Card {
       id: choiceCard
+      dock: root
       anchors.centerIn: parent
       focus: true
       Keys.onPressed: function(event) {
@@ -2797,18 +2796,6 @@ Item {
       }
       width: 540
       height: choiceColumn.implicitHeight + 48
-      color: root.surface
-      border.color: root.hairline
-      border.width: 1
-      radius: root.menuRadius
-
-      layer.enabled: true
-      layer.effect: MultiEffect {
-        shadowEnabled: true
-        shadowColor: Qt.rgba(0, 0, 0, 0.4)
-        shadowBlur: 0.6
-        shadowVerticalOffset: 2
-      }
 
       Column {
         id: choiceColumn
@@ -4849,24 +4836,13 @@ Item {
           }
         }
 
-        Rectangle {
+        Card {
           id: menuCard
+          dock: root
           x: root.shadowPad
           y: root.shadowPad
           width: Math.min(300, Math.max(180, menuColumn.naturalWidth)) + 12
           height: menuColumn.implicitHeight + 12
-          color: root.surface
-          border.color: root.hairline
-          border.width: 1
-          radius: root.menuRadius
-
-          layer.enabled: true
-          layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.4)
-            shadowBlur: 0.6
-            shadowVerticalOffset: 2
-          }
 
           Column {
             id: menuColumn
@@ -5094,25 +5070,14 @@ Item {
           onWheel: function(w) { w.accepted = true }
         }
 
-        Rectangle {
+        Card {
           id: settingsCard
+          dock: root
           anchors.centerIn: parent
           focus: true
           Keys.onPressed: function(event) { event.accepted = win.settingsKey(event) }
           width: 360
           height: settingsColumn.implicitHeight + 32
-          color: root.surface
-          border.color: root.hairline
-          border.width: 1
-          radius: root.menuRadius
-
-          layer.enabled: true
-          layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.4)
-            shadowBlur: 0.6
-            shadowVerticalOffset: 2
-          }
 
           Column {
             id: settingsColumn
@@ -5430,24 +5395,17 @@ Item {
         implicitWidth: tipCard.width + root.shadowPad * 2
         implicitHeight: tipCard.height + root.shadowPad * 2
 
-        Rectangle {
+        Card {
           id: tipCard
+          dock: root
           x: root.shadowPad
           y: root.shadowPad
           width: tipLabel.implicitWidth + 20
           height: tipLabel.implicitHeight + 10
-          color: root.surface
-          border.color: root.hairline
-          border.width: 1
           radius: root.tipRadius
-
-          layer.enabled: true
-          layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.35)
-            shadowBlur: 0.5
-            shadowVerticalOffset: 1
-          }
+          shadowOpacity: 0.35
+          shadowBlur: 0.5
+          shadowOffset: 1
 
           Text {
             id: tipLabel

@@ -91,7 +91,7 @@ Item {
   }
   // File managers the dock may have pinned first before the default changed (see normalizePins).
   readonly property var knownFileManagers: ["org.gnome.Nautilus", "thunar", "org.kde.dolphin", "nemo",
-    "pcmanfm", "pcmanfm-qt", "caja", "org.xfce.thunar"]
+    "pcmanfm", "pcmanfm-qt", "caja", "org.xfce.thunar", "folio"]
 
   function isFixed(key) {
     return key === root.fixedApp
@@ -220,6 +220,13 @@ Item {
     return !!root.terminalApp && key === root.terminalApp
   }
 
+  // Known by name, or by its desktop entry's category (new file managers keep appearing).
+  function isFileManager(id) {
+    if (root.knownFileManagers.indexOf(id) !== -1) return true
+    var entry = DesktopEntries.byId(id)
+    return !!entry && (entry.categories || []).indexOf("FileManager") !== -1
+  }
+
   // Pins saved under another id (an old "org.omarchy.terminal" pin, or an aliased app id)
   // belong to the icon they're grouped under. The file manager always comes first; a
   // different file manager in first place was the fixed one before the default changed,
@@ -229,7 +236,7 @@ Item {
     for (var i = 0; i < list.length; i++) {
       var p = list[i]
       if (typeof p !== "string" || p.length === 0) continue
-      if (i === 0 && p !== root.fixedApp && root.knownFileManagers.indexOf(p) !== -1) continue
+      if (i === 0 && p !== root.fixedApp && root.isFileManager(p)) continue
       var key = root.effectiveAliases[p] || p
       if (out.indexOf(key) === -1) out.push(key)
     }

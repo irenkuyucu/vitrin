@@ -60,6 +60,19 @@ the test entries from the config, and look at the dock.
     icon. `Ctrl + H` turns hiding on and ends the mode.
   Not yet checked: a second monitor (Super+D must pick the focused screen's dock) and a
   fullscreen app (the dock slides up over it).
+- **Another file manager** (Omarchy 4.6 replaces Nautilus with Files, `folio`; checked against its
+  upstream source before it shipped, so check again with the package): make it the default
+  (`xdg-mime default folio.desktop inode/directory`, and put `~/.config/mimeapps.list` back after),
+  then restart the shell. The first slot shows its icon, and the first pin in the config is
+  rewritten to its id. Then check a click on that slot, a middle-click on Downloads, a stack's
+  "Open in Files" and a file's "Show in Files" (it opens the folder with the file selected). Drag a
+  file from a stack into one of its windows, and from one of its windows onto Downloads and the
+  Trash. Put the old default back: its icon returns to the first slot. Windows of several
+  processes group under one icon; its preview window (`folio preview FILE`) is listed there too.
+  To try one that isn't installed, build it in a scratch folder and give it a desktop entry in
+  `~/.local/share/applications` whose `Exec` is the program's full path (Omarchy's launcher
+  doesn't see `~/.local/bin`). An icon added to a folder the running dock doesn't watch only shows
+  after a shell restart.
 - **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),
   create it (the badge goes), delete it (the badge returns); try a path several levels down.
 - **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`

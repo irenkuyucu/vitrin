@@ -706,6 +706,37 @@ class ThumbnailTests(Fixture):
         self.assertFalse(self.log.exists())
 
 
+class ThumbnailStampTests(Fixture):
+    """A preview is current when its stamp has the file's modification time."""
+
+    def test_a_checksum_that_looks_like_digits_doesnt_make_it_out_of_date(self):
+        import zlib
+        name = b"Thumb::MTime\0"
+        mtime = next(m for m in range(1_700_000_000, 1_700_100_000)
+                     if 0x30 <= (zlib.crc32(b"tEXt" + name + str(m).encode()) >> 24) <= 0x39)     # (the checksum starts like a digit)
+        data = name + str(mtime).encode()
+        chunk = len(data).to_bytes(4, "big") + b"tEXt" + data + (zlib.crc32(b"tEXt" + data) & 0xFFFFFFFF).to_bytes(4, "big")
+        path = self.base / "file.dat"
+        path.write_text("x")
+        os.utime(path, (mtime, mtime))
+        preview = self.base / "cache" / "thumbnails" / "large" / "abc.png"
+        preview.parent.mkdir(parents=True)
+        preview.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk)
+        result = self.run_script("thumbnail.sh", "x/test", path, path.as_uri(), "abc")
+        self.assertEqual(result.stdout, f"abc ok {preview}\n".encode())
+
+    def test_a_different_time_is_out_of_date(self):
+        data = b"Thumb::MTime\0" + b"1700000001"
+        path = self.base / "file.dat"
+        path.write_text("x")
+        os.utime(path, (1_700_000_002, 1_700_000_002))
+        preview = self.base / "cache" / "thumbnails" / "large" / "abc.png"
+        preview.parent.mkdir(parents=True)
+        preview.write_bytes(b"\x89PNG\r\n\x1a\n" + data)
+        result = self.run_script("thumbnail.sh", "x/test", path, path.as_uri(), "abc")
+        self.assertNotIn(b" ok ", result.stdout)
+
+
 class ThumbnailWithoutMagickTests(Fixture):
     """No ImageMagick: no previews can be made, and nothing is written down as failed."""
 

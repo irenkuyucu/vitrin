@@ -62,9 +62,13 @@ split_exec() {
   return 0
 }
 
-# The Thumb::MTime a preview was stamped with (empty if none).
-stamped_mtime() {
-  grep -a -o -m 1 'Thumb::MTime.[0-9]*' "$1" 2>/dev/null | tr -dc '0-9'
+# Whether a preview was stamped with this modification time. The stamp is read from the raw
+# bytes, and the checksum that follows it can start with bytes that look like digits: only as
+# many digits as the time has are compared.
+stamped_with() {
+  local stamped
+  stamped=$(grep -a -o -m 1 'Thumb::MTime.[0-9]*' "$1" 2>/dev/null | tr -dc '0-9')
+  [ "${stamped:0:${#2}}" = "$2" ]
 }
 
 shopt -u patsub_replacement 2>/dev/null   # (bash 5.2+: a "&" in a path would mean the matched text)
@@ -94,10 +98,10 @@ one() {
   local mime=$1 path=$2 uri=$3 hash=$4 mtime f exec tmp args=() word
   mtime=$(stat -c %Y -- "$path" 2>/dev/null) || return
   for f in "$cache/large/$hash.png" "$cache/normal/$hash.png"; do
-    if [ -f "$f" ] && [ "$(stamped_mtime "$f")" = "$mtime" ]; then echo "$hash ok $f"; return; fi
+    if [ -f "$f" ] && stamped_with "$f" "$mtime"; then echo "$hash ok $f"; return; fi
   done
   f="$cache/fail/vitrin/$hash.png"
-  if [ -f "$f" ] && [ "$(stamped_mtime "$f")" = "$mtime" ]; then echo "$hash failed"; return; fi
+  if [ -f "$f" ] && stamped_with "$f" "$mtime"; then echo "$hash failed"; return; fi
 
   # Making a preview needs ImageMagick (to stamp it); without it, no preview can be made, and
   # nothing is recorded as failed either: that would only be wrong once it is installed.

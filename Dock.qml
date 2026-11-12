@@ -193,20 +193,43 @@ Item {
   property string terminalApp: ""
   readonly property var knownTerminals: ["foot", "Alacritty", "com.mitchellh.ghostty", "kitty"]
 
+  // The first of these that's installed; failing that, the first app (by id) in this category
+  // (a terminal or browser the lists above have never heard of). Entries that aren't meant to be
+  // opened by the user, and Omarchy's web apps and link forwarder, don't count.
+  function firstInstalled(ids, category) {
+    for (var i = 0; i < ids.length; i++) if (DesktopEntries.byId(ids[i])) return ids[i]
+    var found = []
+    var apps = DesktopEntries.applications.values
+    for (var j = 0; j < apps.length; j++) {
+      var app = apps[j]
+      if (!app || app.noDisplay || (app.categories || []).indexOf(category) === -1) continue
+      if (/\s/.test(String(app.id)) || String(app.id) === "omarchy-browser"
+          || String(app.execString || "").indexOf("omarchy-launch-webapp") !== -1) continue
+      found.push(String(app.id))
+    }
+    found.sort()
+    return found.length > 0 ? found[0] : ""
+  }
+
+  // What the system reported as its default terminal (or "") -> the one to use.
+  function pickTerminal(reported) {
+    return reported && DesktopEntries.byId(reported) ? reported : firstInstalled(root.knownTerminals, "TerminalEmulator")
+  }
+
+  // The same for the default browser: Omarchy's forwarder ("omarchy-browser") isn't a browser.
+  function pickBrowser(reported) {
+    var entry = reported ? DesktopEntries.byId(reported) : null
+    if (entry && !entry.noDisplay && reported !== "omarchy-browser") return reported
+    return firstInstalled(root.knownBrowsers, "WebBrowser")
+  }
+
   Process {
     id: terminalFinder
     running: true
     command: ["bash", root.script("default-terminal.sh")]
     stdout: StdioCollector {
       onStreamFinished: {
-        var id = String(text).trim()
-        if (!id || !DesktopEntries.byId(id)) {
-          // No preference recorded: fall back to the first known terminal that's installed.
-          id = ""
-          for (var i = 0; i < root.knownTerminals.length; i++) {
-            if (DesktopEntries.byId(root.knownTerminals[i])) { id = root.knownTerminals[i]; break }
-          }
-        }
+        var id = root.pickTerminal(String(text).trim())
         if (id !== root.terminalApp) root.terminalApp = id
         root.terminalKnown = true
         root.finishFirstRun(false)
@@ -319,16 +342,7 @@ Item {
       + "exec xdg-settings get default-web-browser"]
     stdout: StdioCollector {
       onStreamFinished: {
-        var id = String(text).trim().replace(/\.desktop$/, "")
-        var entry = id ? DesktopEntries.byId(id) : null
-        if (!entry || entry.noDisplay || id === "omarchy-browser") {
-          // No default set: the first known browser that's installed.
-          id = ""
-          for (var i = 0; i < root.knownBrowsers.length; i++) {
-            if (DesktopEntries.byId(root.knownBrowsers[i])) { id = root.knownBrowsers[i]; break }
-          }
-        }
-        root.browserApp = id
+        root.browserApp = root.pickBrowser(String(text).trim().replace(/\.desktop$/, ""))
         root.browserKnown = true
         root.finishFirstRun(false)
       }

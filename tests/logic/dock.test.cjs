@@ -276,6 +276,45 @@ describe("syncLayout", () => {
 
 // ------------------------------------------------------------------ pins
 
+describe("the default terminal and browser", () => {
+  const entry = (id, extra = {}) => [id, { id, categories: [], noDisplay: false, execString: id, ...extra }];
+  function dockWith(...entries) {
+    const map = Object.fromEntries(entries);
+    return dock({ entries: map, apps: Object.values(map) });
+  }
+
+  it("the system's default is used when it's installed", () => {
+    const env = dockWith(entry("kitty"), entry("foot"));
+    assert.equal(env.root.pickTerminal("foot"), "foot");
+    assert.equal(dockWith(entry("firefox"), entry("zen")).root.pickBrowser("zen"), "zen");
+  });
+
+  it("otherwise the first usual one that's installed", () => {
+    assert.equal(dockWith(entry("kitty"), entry("foot")).root.pickTerminal(""), "foot");
+    assert.equal(dockWith(entry("brave-browser"), entry("firefox")).root.pickBrowser("missing"), "firefox");
+  });
+
+  it("otherwise one the lists don't know, by its category", () => {
+    const env = dockWith(entry("org.wezfurlong.wezterm", { categories: ["System", "TerminalEmulator"] }),
+                         entry("xterm", { categories: ["TerminalEmulator"], noDisplay: true }), entry("editor", { categories: ["TextEditor"] }));
+    assert.equal(env.root.pickTerminal(""), "org.wezfurlong.wezterm");
+    assert.equal(dockWith(entry("vivaldi-stable", { categories: ["Network", "WebBrowser"] })).root.pickBrowser(""), "vivaldi-stable");
+  });
+
+  it("Omarchy's web apps and its link forwarder are not browsers, even with the category", () => {
+    const env = dockWith(entry("Google Photos", { categories: ["WebBrowser"] }),
+                         entry("photos", { categories: ["WebBrowser"], execString: "omarchy-launch-webapp https://photos.google.com" }),
+                         entry("omarchy-browser", { categories: ["WebBrowser"] }));
+    assert.equal(env.root.pickBrowser("omarchy-browser"), "");
+  });
+
+  it("nothing installed is no terminal and no browser", () => {
+    const env = dockWith();
+    assert.equal(env.root.pickTerminal(""), "");
+    assert.equal(env.root.pickBrowser(""), "");
+  });
+});
+
 describe("the dock's file manager", () => {
   const installed = (...ids) => Object.fromEntries(ids.map(id => [id, { id }]));
   function resolve(entries, systemFileManager, fixedApp = "org.gnome.Nautilus", apps) {

@@ -1189,12 +1189,15 @@ Item {
   readonly property var hiddenWindows: [{ id: "omasnap", titleStart: "omasnap-pin " }]
 
   // Whether a window stays out of the dock (an app listed in "alwaysShow" is never hidden).
-  function isHiddenWindow(appId, title) {
+  // The window's title is only read for an app with a rule about titles: reading it ties the
+  // caller to every change of it, and the grouping would otherwise run again each time any
+  // window's title changes (a terminal's, a browser tab's).
+  function isHiddenWindow(appId, window) {
     if (root.alwaysShow.indexOf(appId) !== -1) return false
     if (root.hiddenAppIds.indexOf(appId) !== -1) return true
     for (var i = 0; i < root.hiddenWindows.length; i++) {
       var rule = root.hiddenWindows[i]
-      if (rule.id === appId && String(title || "").indexOf(rule.titleStart) === 0) return true
+      if (rule.id === appId && String(window && window.title || "").indexOf(rule.titleStart) === 0) return true
     }
     return false
   }
@@ -1451,7 +1454,7 @@ Item {
     var entriesMissing = !!_apps && _apps.length === 0 && !root.windowsSettled
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
-      if (!t || !t.appId || root.isHiddenWindow(t.appId, t.title)) continue
+      if (!t || !t.appId || root.isHiddenWindow(t.appId, t)) continue
       // A dialog or helper window (one with a parent window) belongs to its top-most
       // parent's app, never shown as an app of its own: e.g. an app's template chooser
       // or file picker that opens under a generic window id.
@@ -1563,7 +1566,7 @@ Item {
     for (var i = 0; i < toplevels.length; i++) {
       var appId = toplevels[i] && toplevels[i].appId
       if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
-      if (root.isHiddenWindow(appId, toplevels[i].title)) continue
+      if (root.isHiddenWindow(appId, toplevels[i])) continue
       if (isHelperWindow(appId)) { reportHelper(appId); continue }
       var target = root.effectiveAliases[appId] || appId
       open[target] = true

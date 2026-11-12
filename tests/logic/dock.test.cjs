@@ -177,9 +177,19 @@ describe("computeGroups", () => {
 
     it("shows hidden windows of an app listed under alwaysShow", () => {
       const e = setup({ alwaysShow: ["omasnap", "org.omarchy.screensaver"] });
-      assert.equal(e.root.isHiddenWindow("omasnap", "omasnap-pin 1"), false);
-      assert.equal(e.root.isHiddenWindow("org.omarchy.screensaver", ""), false);
-      assert.equal(setup().root.isHiddenWindow("org.omarchy.screensaver", ""), true);
+      assert.equal(e.root.isHiddenWindow("omasnap", { title: "omasnap-pin 1" }), false);
+      assert.equal(e.root.isHiddenWindow("org.omarchy.screensaver", { title: "" }), false);
+      assert.equal(setup().root.isHiddenWindow("org.omarchy.screensaver", { title: "" }), true);
+    });
+
+    it("only reads a window's title for an app with a rule about titles (so ordinary title changes don't redo the grouping)", () => {
+      let reads = 0;
+      const window = appId => ({ appId, get title() { reads++; return "x"; } });
+      const e = setup();
+      e.root.computeGroups([window("gedit"), window("org.omarchy.screensaver"), window("kitty")]);
+      assert.equal(reads, 0);
+      e.root.computeGroups([window("omasnap")]);
+      assert.equal(reads, 1);
     });
 
     it("waits while the list of apps hasn't loaded yet, but not for ever", () => {

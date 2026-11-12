@@ -85,13 +85,29 @@ Item {
   // moved. It's the system's default one (the app that opens folders, see "places" below);
   // Omarchy's, Files (Nautilus), until that's known.
   property string fixedApp: "org.gnome.Nautilus"
+  property string systemFileManager: ""      // the system's default, once known (see "places")
   readonly property string fileManagerName: {
     var entry = DesktopEntries.byId(root.fixedApp)
     return entry && entry.name ? String(entry.name) : "Files"
   }
   // File managers the dock may have pinned first before the default changed (see normalizePins).
   readonly property var knownFileManagers: ["org.gnome.Nautilus", "thunar", "org.kde.dolphin", "nemo",
-    "pcmanfm", "pcmanfm-qt", "caja", "org.xfce.thunar", "folio"]
+    "pcmanfm", "pcmanfm-qt", "caja", "org.xfce.thunar", "folio", "io.github.lgse.Strata", "com.thisisgm.flea", "flea"]
+
+  // The dock's file manager: the system's default; when that isn't known, or isn't installed, the
+  // first installed one of the usual ones (Omarchy 4.6 no longer has Nautilus, so the first
+  // guess above may not exist). Asked again whenever the installed apps change.
+  function resolveFileManager() {
+    if (DesktopEntries.applications.values.length === 0) return      // (not loaded yet, or being rescanned)
+    var id = root.systemFileManager
+    if (!id || !DesktopEntries.byId(id)) {
+      id = ""
+      for (var i = 0; i < root.knownFileManagers.length; i++) {
+        if (DesktopEntries.byId(root.knownFileManagers[i])) { id = root.knownFileManagers[i]; break }
+      }
+    }
+    if (id && id !== root.fixedApp) root.fixedApp = id
+  }
 
   function isFixed(key) {
     return key === root.fixedApp
@@ -147,7 +163,8 @@ Item {
       onStreamFinished: {
         var lines = String(text).split("\n")
         var fm = lines[0] || ""
-        if (fm && DesktopEntries.byId(fm) && fm !== root.fixedApp) root.fixedApp = fm
+        root.systemFileManager = fm
+        root.resolveFileManager()
         if (lines[1]) {
           root.downloadsPath = lines[1].indexOf(root.home + "/") === 0 ? "~" + lines[1].slice(root.home.length) : lines[1]
           root.downloadsName = lines[2] || lines[1].split("/").pop()
@@ -900,7 +917,7 @@ Item {
   // removed ones don't), so everything in use is looked up again once the install settles.
   Connections {
     target: DesktopEntries.applications
-    function onValuesChanged() { iconRefresh.restart(); iconWarm.restart() }
+    function onValuesChanged() { iconRefresh.restart(); iconWarm.restart(); root.resolveFileManager() }
   }
   // The app grid's icons are looked up ahead of time (a moment after the apps are known, and
   // again when they change), so its first opening shows their final files at once: otherwise

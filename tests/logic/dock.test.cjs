@@ -276,6 +276,36 @@ describe("syncLayout", () => {
 
 // ------------------------------------------------------------------ pins
 
+describe("the dock's file manager", () => {
+  const installed = (...ids) => Object.fromEntries(ids.map(id => [id, { id }]));
+  function resolve(entries, systemFileManager, fixedApp = "org.gnome.Nautilus", apps) {
+    const env = dock({ entries: installed(...entries), apps, root: { systemFileManager, fixedApp, pins: [fixedApp] } });
+    env.root.resolveFileManager();
+    return env.root.fixedApp;
+  }
+
+  it("is the system's default when it's installed", () => {
+    assert.equal(resolve(["folio", "org.gnome.Nautilus"], "folio"), "folio");
+  });
+
+  it("is the first usual one that's installed when the default is unknown or isn't installed", () => {
+    assert.equal(resolve(["org.kde.dolphin", "thunar"], ""), "thunar");
+    assert.equal(resolve(["org.kde.dolphin"], "gone"), "org.kde.dolphin");
+    assert.equal(resolve(["io.github.lgse.Strata"], ""), "io.github.lgse.Strata");
+  });
+
+  it("stays as it is when nothing is installed, or the apps haven't loaded (or are being rescanned)", () => {
+    assert.equal(resolve([], "", "org.gnome.Nautilus"), "org.gnome.Nautilus");
+    assert.equal(resolve(["org.kde.dolphin"], "", "org.gnome.Nautilus", []), "org.gnome.Nautilus");
+  });
+
+  it("recognises file managers by name, by category, and not other apps", () => {
+    const env = dock({ entries: { fancy: { id: "fancy", categories: ["System", "FileManager"] }, edit: { id: "edit", categories: ["TextEditor"] } } });
+    for (const id of ["org.gnome.Nautilus", "folio", "io.github.lgse.Strata", "com.thisisgm.flea", "fancy"]) assert.equal(env.root.isFileManager(id), true, id);
+    for (const id of ["edit", "unknown", "zen"]) assert.equal(env.root.isFileManager(id), false, id);
+  });
+});
+
 describe("normalizePins", () => {
   it("keeps the file manager first, once, and adds the Apps icon", () => {
     const env = dock();

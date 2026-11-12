@@ -99,6 +99,22 @@ the test entries from the config, and look at the dock.
   says it exists but can't be read, nothing is written; after `chmod 644` and another `touch`
   the file is read again and is unchanged.
 
+## Not checked yet: needs other hardware
+
+These have never been run (the machine Vitrin is developed on has one monitor at scale 1).
+
+- **A second monitor:** each screen gets its own dock. `omarchy-shell vitrin focus` (Super+D)
+  starts keyboard mode on the dock of the screen with focus, and only there; move focus to the
+  other screen and again. Unplug the screen while the mode is on: the pointer options
+  (`input:follow_mouse`, `cursor:hide_on_key_press`) read their normal values afterwards, and the
+  remaining dock still works. Plug it back in: its dock returns.
+- **Fractional scaling** (1.25, 1.5; and 2): icons in the dock, the launcher and the stacks are
+  sharp, the dock keeps its proportions, and menus, stacks and labels sit centered over their
+  icon. A drag follows the pointer exactly, and the removal distance feels the same.
+- **A full-screen app:** the dock stays hidden over it; the bottom edge slides it up over the app,
+  and Super+D shows it (keyboard mode works there); leaving the edge hides it again. With the
+  screensaver (or any window in `neverShowOver`) focused, the edge doesn't bring it up.
+
 ## Pitfalls
 
 - `pkill -f` and `pgrep -f` match the whole command line, including your own shell's if it

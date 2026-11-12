@@ -46,6 +46,20 @@ the test entries from the config, and look at the dock.
 - **App grid icons:** right after a shell restart, the first opening shows real icons, not letter tiles, and none swaps or blinks once the grid is open (log each icon's `source` and `status` in AppGrid.qml for a moment to see it).
 - **App grid panel:** it opens centered on a dimmed screen, whole columns wide; clicking the dim closes it. Look at it on a light theme too (`omarchy theme set "Catppuccin Latte"`, then set your own back).
 - **Touchpad scrolling (app grid, stacks):** `tests/live/vptr.py W H scroll -8 10` glides on after the last event (compare two screenshots a moment apart), `notch 3` still scrolls, and hovering an app afterwards highlights it. With a row half in view at the edge, hovering an app in it highlights it without moving the row. Feel is checked by hand on a real touchpad.
+- **Keyboard mode and the mouse:** `omarchy-shell vitrin focus` turns the mode on; it is on while
+  `hyprctl getoption input:follow_mouse` reads 2 (1 when off, with the default config).
+  Check each of these ends with the option back at its normal value and the screen as described:
+  - Click a running app's icon (with the app not focused, then focused): the mode ends, and the
+    app has the keyboard (`hyprctl activewindow`).
+  - Click a folder's icon: the mode ends and its stack opens, with no highlight left on the dock.
+  - Open the app grid, then `omarchy-shell vitrin focus`: nothing changes, and no highlight
+    flashes (take several screenshots in a row right after, and compare the Files icon).
+  - Highlight a recent app's icon, then remove that app from `recent` in the config: the highlight
+    moves to the icon now at its place, and the mode goes on.
+  - Drag an icon sideways: the mode goes on. Type a letter: the highlight jumps to the matching
+    icon. `Ctrl + H` turns hiding on and ends the mode.
+  Not yet checked: a second monitor (Super+D must pick the focused screen's dock) and a
+  fullscreen app (the dock slides up over it).
 - **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),
   create it (the badge goes), delete it (the badge returns); try a path several levels down.
 - **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`

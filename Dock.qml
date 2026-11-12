@@ -3278,7 +3278,7 @@ Item {
       }
 
       function enterKeyMode() {
-        if (win.suppressed || win.keyMode) return
+        if (win.suppressed || win.keyMode || appGrid.opened) return   // (the launcher has the keyboard)
         win.closeMenu()
         win.closeStack()
         win.reveal()
@@ -3512,9 +3512,24 @@ Item {
         onTriggered: if (win.keyMode) win.keyHeld = true
       }
 
+      // The highlighted icon can vanish (its app leaves Recent, the config changes): the
+      // highlight moves to the icon now at its place, or the mode ends if none is left.
+      property int keyLastIndex: 0
+      Timer {
+        id: keyRecheck
+        interval: 120
+        onTriggered: {
+          if (!win.keyMode || win.menuByKey || win.stackByKey) return
+          var list = win.keyButtons()
+          if (list.length === 0) { win.exitKeyMode(); return }
+          if (list.indexOf(win.kbButton) === -1) win.keySelect(list[Math.min(win.keyLastIndex, list.length - 1)])
+        }
+      }
+
       function keySelect(button) {
         if (win.kbButton === button && win.tipText !== "") return   // already there: leave the label alone
         win.kbButton = button
+        win.keyLastIndex = win.keyButtons().indexOf(button)
         win.keyReveal(button)
         win.showTip(button, button.label, true)
       }
@@ -3906,6 +3921,7 @@ Item {
         // than move the wrong one. (Not on items: that is rebuilt whenever any window's
         // title changes, which would end a drag at random.)
         function onLayoutChanged() {
+          if (win.keyMode) keyRecheck.restart()
           if (win.dragFrom !== -1 && !win.dragFolder) win.cancelDrag()
         }
         function onFoldersChanged() {

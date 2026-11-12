@@ -365,7 +365,10 @@ Item {
       // The app launcher has no middle-click (its menu has Move and Remove only).
       if (!button.isFolder && button.dock.isApps(button.item.key) && m.button === Qt.MiddleButton) {
         return
-      } else if (m.button === Qt.RightButton) {
+      }
+      // A click ends keyboard mode, as Enter does (else the dock keeps the keyboard from the app).
+      if (m.button !== Qt.RightButton && button.window.keyMode) button.window.exitKeyMode()
+      if (m.button === Qt.RightButton) {
         button.window.openMenu(button, button.item, button.isFolder)
       } else if (button.missing) {
         button.window.folderClicked(button, button.item)

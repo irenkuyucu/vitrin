@@ -2095,30 +2095,60 @@ Item {
   Process {
     id: folderLister
     property var dirs: []
+    property bool partial: false            // only some of the folders were listed
     stdout: StdioCollector {
-      onStreamFinished: root.applyFolderListing(folderLister.dirs, text)
+      onStreamFinished: root.applyFolderListing(folderLister.dirs, text, folderLister.partial)
     }
     onRunningChanged: {
       if (!running && root.folderRefreshPending) {
         root.folderRefreshPending = false
-        root.refreshFolders()
+        root.refreshFolders(true)
       }
     }
   }
 
-  function refreshFolders() {
+  // Which folders changed since they were last listed: files arriving in one name just that
+  // folder; anything else (a shortcut added, a folder that turned up) means all of them.
+  property var folderDirty: ({})
+  property bool folderDirtyAll: true
+  function refreshFoldersSoon(dir) {
+    if (dir === undefined) root.folderDirtyAll = true
+    else root.folderDirty[String(dir).replace(/\/+$/, "")] = true
+    folderRefreshSoon.restart()
+  }
+
+  // -> { dirs: [...], partial: bool }: the folders to list now (and forgets that they were dirty).
+  function takeDirtyFolders() {
+    var all = root.folders.filter(function(f) { return !isTrash(f) }).map(function(f) { return expandPath(f.path) })
+    var dirs = all
+    var partial = false
+    if (!root.folderDirtyAll) {
+      dirs = all.filter(function(d) { return root.folderDirty[d.replace(/\/+$/, "")] })
+      partial = dirs.length < all.length
+    }
+    root.folderDirty = ({})
+    root.folderDirtyAll = false
+    return { dirs: dirs, partial: partial }
+  }
+
+  // Lists the folders (the ones that changed with dirtyOnly, as the file watcher's timer asks;
+  // otherwise all of them).
+  function refreshFolders(dirtyOnly) {
+    if (!dirtyOnly) root.folderDirtyAll = true
     if (folderLister.running) {
       root.folderRefreshPending = true
       return
     }
-    var dirs = root.folders.filter(function(f) { return !isTrash(f) }).map(function(f) { return expandPath(f.path) })
+    var job = takeDirtyFolders()
+    var dirs = job.dirs
     if (dirs.length === 0) return
     folderLister.dirs = dirs
+    folderLister.partial = job.partial
     // See scripts/list-folders.sh: newest entries by date added, hidden files and
     // unfinished downloads skipped.
     folderLister.command = ["bash", root.script("list-folders.sh"), String(root.pileMax)].concat(dirs)
     folderLister.running = true
-    if (root.stackOpenDir) refreshStack(root.stackOpenDir)
+    if (root.stackOpenDir && (!job.partial || dirs.indexOf(root.stackOpenDir) !== -1)) refreshStack(root.stackOpenDir)
   }
 
   // ---- the open stack's full listing
@@ -2171,7 +2201,7 @@ Item {
   Timer {
     id: folderRefreshSoon
     interval: 700
-    onTriggered: root.refreshFolders()
+    onTriggered: root.refreshFolders(true)
   }
 
   // ------------------------------------------------------------ watching folders
@@ -2199,7 +2229,7 @@ Item {
         var events = String(line).slice(0, bar)
         var dir = String(line).slice(bar + 1).replace(/\/+$/, "")
         if (dir === root.trashFilesDir) trashRefreshSoon.restart()
-        else folderRefreshSoon.restart()
+        else root.refreshFoldersSoon(dir)
         // A folder that went away is waited for (by missingWatcher) from now on.
         if (events.indexOf("DELETE_SELF") !== -1 || events.indexOf("MOVE_SELF") !== -1) Qt.callLater(root.restartWatcher)
       }
@@ -2244,7 +2274,7 @@ Item {
     interval: 300                          // (a folder and its contents can arrive in a burst)
     onTriggered: {
       root.restartWatcher()
-      folderRefreshSoon.restart()
+      root.refreshFoldersSoon()
       trashRefreshSoon.restart()
     }
   }
@@ -2293,15 +2323,22 @@ Item {
   onWatchedDirsChanged: Qt.callLater(root.restartWatcher)
 
 
-  onFoldersChanged: folderRefreshSoon.restart()
+  onFoldersChanged: root.refreshFoldersSoon()
 
   // Records are NUL-terminated "<folder index>\t<mime type>\t<icon names>\t<path>" (so any file name,
   // even one with a tab or line break in it, comes through intact).
-  function applyFolderListing(dirs, text) {
+  // With partial, only some of the folders were listed: the others keep what they had.
+  function applyFolderListing(dirs, text, partial) {
     var listing = parseFolderListing(dirs, text)
-    assignIfChanged("folderFiles", listing.files)
-    // A folder that's there always gets a count, even when empty.
+    var files = listing.files
     var missing = {}
+    if (partial) {
+      files = Object.assign({}, root.folderFiles, files)
+      missing = Object.assign({}, root.missingFolders)
+      for (var d = 0; d < dirs.length; d++) delete missing[dirs[d]]
+    }
+    assignIfChanged("folderFiles", files)
+    // A folder that's there always gets a count, even when empty.
     for (var i = 0; i < dirs.length; i++) if (listing.totals[dirs[i]] === undefined) missing[dirs[i]] = true
     assignIfChanged("missingFolders", missing)
   }
@@ -2494,7 +2531,7 @@ Item {
         trashRefreshSoon.restart()
       } else {
         moveIntoFolder(expandPath(item.path), files)
-        folderRefreshSoon.restart()
+        root.refreshFoldersSoon(expandPath(item.path))
       }
       return
     }

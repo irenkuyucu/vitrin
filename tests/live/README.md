@@ -88,6 +88,9 @@ the test entries from the config, and look at the dock.
   from `ps`. Add a desktop entry (it starts again, then stops again after a minute), and
   switch the icon theme with `gsettings set org.gnome.desktop.interface icon-theme <name>` while
   it is stopped: the dock's icons change at once, and change back when you restore the theme.
+- **Only the folder that changed is listed:** add a second folder shortcut, then `touch` a hidden
+  file (`.probe`) in one of the two. Sampling `ps -eo args` in a tight loop shows
+  `list-folders.sh` run for that folder alone; a visible new file shows in its pile.
 - **Folder watcher keeps dying:** kill the dock's `inotifywait` (`ps -eo pid,args`, the one with
   `create,delete,moved_to`) by its PID several times in a row, right after it comes back: it
   restarts after 2 s, then 4, then 8 (up to a minute), and a watcher that ran for 10 s or more

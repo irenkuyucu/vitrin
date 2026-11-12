@@ -586,6 +586,107 @@ describe("parseFolderListing", () => {
   });
 });
 
+describe("listing only the folders that changed", () => {
+  const A = "/home/u/Downloads", B = "/home/u/Pictures";
+  function setup(extra = {}) {
+    const soon = { restarts: 0, restart() { this.restarts++; } };
+    const lister = { running: false, dirs: [], partial: null, command: null };
+    const stacks = [];
+    const env = dock({
+      root: { folders: [{ path: "~/Downloads" }, { path: "/home/u/Pictures/" }, { path: "trash:///" }], isTrash: f => f.path === "trash:///",
+        folderDirty: {}, folderDirtyAll: true, folderRefreshPending: false, stackOpenDir: "", folderFiles: {}, missingFolders: {},
+        refreshStack: d => stacks.push(d), script: n => "/s/" + n, pileMax: 12, ...extra },
+      globals: { folderRefreshSoon: soon, folderLister: lister },
+    });
+    return { env, soon, lister, stacks };
+  }
+  const settle = env => { env.root.takeDirtyFolders(); };   // (a first listing has been done)
+
+  it("lists everything at first, and when asked for everything", () => {
+    const { env, lister } = setup();
+    env.root.refreshFolders(true);
+    assert.deepEqual(lister.dirs, [A, B + "/"]);
+    assert.equal(lister.partial, false);
+    assert.equal(lister.running, true);
+  });
+
+  it("lists just the folder that changed (the watcher gives its path without a trailing slash)", () => {
+    const { env, soon, lister } = setup();
+    settle(env);
+    env.root.refreshFoldersSoon(B);
+    assert.equal(soon.restarts, 1);
+    env.root.refreshFolders(true);
+    assert.deepEqual(lister.dirs, [B + "/"]);
+    assert.equal(lister.partial, true);
+  });
+
+  it("lists all of them for a change that names no folder, and for a plain call", () => {
+    const one = setup();
+    settle(one.env);
+    one.env.root.refreshFoldersSoon();
+    one.env.root.refreshFolders(true);
+    assert.equal(one.lister.partial, false);
+    const two = setup();
+    settle(two.env);
+    two.env.root.refreshFolders();           // (the dock appearing, say)
+    assert.deepEqual(two.lister.dirs, [A, B + "/"]);
+    assert.equal(two.lister.partial, false);
+  });
+
+  it("does nothing for a folder that isn't a shortcut any more", () => {
+    const { env, lister } = setup();
+    settle(env);
+    env.root.refreshFoldersSoon("/gone");
+    env.root.refreshFolders(true);
+    assert.equal(lister.running, false);
+  });
+
+  it("remembers what changed while a listing runs, and asks again afterwards", () => {
+    const { env, lister } = setup();
+    settle(env);
+    lister.running = true;
+    env.root.refreshFoldersSoon(A);
+    env.root.refreshFolders(true);
+    assert.equal(env.root.folderRefreshPending, true);
+    lister.running = false;
+    env.root.refreshFolders(true);
+    assert.deepEqual(lister.dirs, [A]);
+  });
+
+  it("refreshes an open stack only when its folder was listed", () => {
+    const open = setup({ stackOpenDir: A });
+    settle(open.env);
+    open.env.root.refreshFoldersSoon(B);
+    open.env.root.refreshFolders(true);
+    assert.deepEqual(open.stacks, []);
+    open.lister.running = false;
+    open.env.root.refreshFoldersSoon(A);
+    open.env.root.refreshFolders(true);
+    assert.deepEqual(open.stacks, [A]);
+  });
+
+  describe("applying a partial listing", () => {
+    const record = (...f) => f.join("\t") + "\0";
+    it("keeps the other folders' files and missing marks", () => {
+      const { env } = setup({
+        folderFiles: { [A]: [{ name: "old" }], [B]: [{ name: "keep" }] }, missingFolders: { "/m": true, [A]: true },
+        mimeIcon: (m, d, i) => i,
+      });
+      env.root.applyFolderListing([A], record(0, "#total", 1) + record(0, "text/plain", "text-x-generic", A + "/new.txt"), true);
+      assert.deepEqual(env.root.folderFiles[A].map(f => f.name), ["new.txt"]);
+      assert.deepEqual(env.root.folderFiles[B].map(f => f.name), ["keep"]);
+      assert.deepEqual(env.root.missingFolders, { "/m": true });          // (A is there now; /m wasn't asked about)
+    });
+
+    it("replaces everything when the listing is complete", () => {
+      const { env } = setup({ folderFiles: { "/gone": [{ name: "x" }] }, missingFolders: { "/gone": true }, mimeIcon: (m, d, i) => i });
+      env.root.applyFolderListing([A], record(0, "#total", 0), false);
+      assert.deepEqual(Object.keys(env.root.folderFiles), [A]);
+      assert.deepEqual(env.root.missingFolders, {});
+    });
+  });
+});
+
 // ------------------------------------------------------------------ names and labels
 
 describe("names", () => {

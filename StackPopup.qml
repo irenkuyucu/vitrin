@@ -2,7 +2,6 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import qs.Commons
-import qs.Commons as Commons
 
 // A folder opened as a stack: its files, newest first, in a grid above the folder's dock
 // icon (up to dock.stackMax of them). The grid shows at most 3 rows (fewer on short
@@ -132,7 +131,7 @@ PopupWindow {
       Text {
         text: stack.folder ? stack.folder.name : ""
         textFormat: Text.PlainText
-        color: Commons.Color.popups.text
+        color: stack.dock.popupText
         font.family: stack.dock.uiFont
         font.pixelSize: stack.dock.uiFontSize + 1
         font.weight: Font.DemiBold
@@ -146,7 +145,7 @@ PopupWindow {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: "No items"
-        color: Commons.Color.popups.text
+        color: stack.dock.popupText
         opacity: 0.6
         font.family: stack.dock.uiFont
         font.pixelSize: stack.dock.uiFontSize
@@ -237,7 +236,7 @@ PopupWindow {
               elide: Text.ElideMiddle
               textFormat: Text.PlainText
               text: tile.modelData.name
-              color: Commons.Color.popups.text
+              color: stack.dock.popupText
               font.family: stack.dock.uiFont
               font.pixelSize: stack.dock.uiFontSize - 2
             }
@@ -318,7 +317,7 @@ PopupWindow {
           leftPadding: 4
           text: "Newest " + stack.files.length.toLocaleString(Qt.locale(), "f", 0)
             + " of " + stack.total.toLocaleString(Qt.locale(), "f", 0)
-          color: Commons.Color.popups.text
+          color: stack.dock.popupText
           opacity: 0.6
           font.family: stack.dock.uiFont
           font.pixelSize: stack.dock.uiFontSize - 1
@@ -340,7 +339,7 @@ PopupWindow {
             id: openText
             anchors.centerIn: parent
             text: "Open in " + stack.dock.fileManagerName
-            color: Commons.Color.popups.text
+            color: stack.dock.popupText
             font.family: stack.dock.uiFont
             font.pixelSize: stack.dock.uiFontSize
           }
@@ -393,7 +392,7 @@ PopupWindow {
               anchors.verticalCenter: parent.verticalCenter
               x: 10
               text: parent.modelData.label
-              color: Commons.Color.popups.text
+              color: stack.dock.popupText
               font.family: stack.dock.uiFont
               font.pixelSize: stack.dock.uiFontSize
             }

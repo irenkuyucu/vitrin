@@ -1,5 +1,4 @@
 import QtQuick
-import qs.Commons as Commons
 
 // The question mark on a folder that can't be found, at the bottom right of its icon.
 // Positioned by whoever shows it: `iconSize` is the icon's drawn size.
@@ -16,7 +15,7 @@ Rectangle {
   Text {
     anchors.centerIn: parent
     text: "?"
-    color: Commons.Color.popups.text
+    color: dock.popupText
     font.family: dock.uiFont
     font.pixelSize: Math.round(parent.width * 0.62)
     font.bold: true

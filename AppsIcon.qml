@@ -1,5 +1,4 @@
 import QtQuick
-import qs.Commons as Commons
 
 // The Apps icon: a 3x3 grid of tiles in a thin outlined square, drawn in the Omarchy
 // theme's accent color (so it follows theme switches and looks the same with any icon
@@ -9,6 +8,7 @@ Item {
   id: apps
 
   property int size: 48
+  property color accent: "#cacccc"      // (the dock's accent colour, given by whoever shows it)
 
   width: size
   height: size
@@ -21,7 +21,7 @@ Item {
     height: width
     radius: Math.round(width * 0.14)
     color: "transparent"
-    border.color: Commons.Color.accent
+    border.color: apps.accent
     border.width: 1
 
     // The tiles' margin inside the square must be even to split into two equal whole-pixel
@@ -45,7 +45,7 @@ Item {
         width: frame.tile
         height: frame.tile
         radius: Math.max(1, Math.min(2, Math.round(frame.tile * 0.15)))
-        color: Commons.Color.accent
+        color: apps.accent
       }
     }
   }

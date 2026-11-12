@@ -276,6 +276,18 @@ describe("syncLayout", () => {
 
 // ------------------------------------------------------------------ pins
 
+describe("Omarchy's colours", () => {
+  const env = dock();
+
+  it("are used as given", () => {
+    assert.equal(env.root.themeColor("#112233", "#000000"), "#112233");
+  });
+
+  it("fall back to a default when Omarchy lacks one (renamed, dropped, empty)", () => {
+    for (const missing of [undefined, null, ""]) assert.equal(env.root.themeColor(missing, "#abcdef"), "#abcdef");
+  });
+});
+
 describe("the default terminal and browser", () => {
   const entry = (id, extra = {}) => [id, { id, categories: [], noDisplay: false, execString: id, ...extra }];
   function dockWith(...entries) {

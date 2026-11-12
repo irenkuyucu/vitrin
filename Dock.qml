@@ -69,9 +69,16 @@ Item {
   readonly property int popupGap: 8
   readonly property string uiFont: "Adwaita Sans"
   readonly property int uiFontSize: 14
-  readonly property color foreground: Commons.Color.foreground
-  readonly property color background: Commons.Color.background
-  readonly property color accent: Commons.Color.accent
+  // Omarchy's colours, read in this one place (the rest of the plugin takes them from here): one
+  // it renames or drops falls back to the usual default instead of breaking what is drawn.
+  function themeColor(value, fallback) {
+    return value === undefined || value === null || String(value) === "" ? fallback : value
+  }
+  readonly property color foreground: themeColor(Commons.Color.foreground, "#cacccc")
+  readonly property color background: themeColor(Commons.Color.background, "#101315")
+  readonly property color accent: themeColor(Commons.Color.accent, "#cacccc")
+  readonly property color urgent: themeColor(Commons.Color.urgent, "#a55555")
+  readonly property color popupText: themeColor(Commons.Color.popups ? Commons.Color.popups.text : undefined, foreground)
   readonly property color surface: Qt.lighter(background, 1.22)   // menus sit slightly above the dock
   readonly property color hairline: Util.alpha(foreground, 0.12)
   readonly property color rowHover: Util.alpha(foreground, 0.10)
@@ -2913,7 +2920,7 @@ Item {
           wrapMode: Text.WordWrap
           text: dockChoiceDialog.starting ? "Use Vitrin instead of Omarchy's dock?"
                                           : "Use Omarchy's dock instead of Vitrin?"
-          color: Commons.Color.popups.text
+          color: root.popupText
           font.family: root.uiFont
           font.pixelSize: root.uiFontSize + 2
           font.weight: Font.DemiBold
@@ -2926,7 +2933,7 @@ Item {
           text: dockChoiceDialog.starting
             ? "Omarchy's own dock is also on. It shows up on floating workspaces, where it would overlap Vitrin, so only one dock should be on at a time."
             : "Omarchy's own dock was just turned on. It would overlap Vitrin on floating workspaces, so only one dock should be on at a time."
-          color: Commons.Color.popups.text
+          color: root.popupText
           font.family: root.uiFont
           font.pixelSize: root.uiFontSize
           lineHeight: 1.15
@@ -2936,7 +2943,7 @@ Item {
           width: parent.width
           wrapMode: Text.WordWrap
           text: "You can switch between the two any time in the Omarchy menu, under Setup \u2192 Plugins: disable the dock you're using, then enable the other."
-          color: Commons.Color.popups.text
+          color: root.popupText
           opacity: 0.75
           font.family: root.uiFont
           font.pixelSize: root.uiFontSize
@@ -2963,7 +2970,7 @@ Item {
               id: otherText
               anchors.centerIn: parent
               text: dockChoiceDialog.starting ? "Keep Omarchy's Dock" : "Keep Vitrin"
-              color: Commons.Color.popups.text
+              color: root.popupText
               font.family: root.uiFont
               font.pixelSize: root.uiFontSize
             }
@@ -4724,6 +4731,7 @@ Item {
           x: dragGhost.x
           y: dragGhost.y
           size: dragGhost.width
+          accent: root.accent
           opacity: dragGhost.opacity
         }
 
@@ -4742,7 +4750,7 @@ Item {
             id: removeLabel
             anchors.centerIn: parent
             text: "Remove"
-            color: Commons.Color.popups.text
+            color: root.popupText
             font.family: root.uiFont
             font.pixelSize: root.uiFontSize - 1
           }
@@ -5077,7 +5085,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   x: 10
                   text: menuRow.isBack ? "‹" : (menuRow.isWindow && menuRow.modelData.hidden) ? "◇" : "✓"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   font.family: root.uiFont
                   font.pixelSize: menuRow.isBack ? root.uiFontSize + 4 : root.uiFontSize
                 }
@@ -5090,7 +5098,7 @@ Item {
                   anchors.right: parent.right
                   anchors.rightMargin: 12
                   text: (menuRow.modelData.value || "") + "   ›"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   opacity: 0.6
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize
@@ -5106,7 +5114,7 @@ Item {
                   wrapMode: menuRow.isText ? Text.WordWrap : Text.NoWrap
                   text: menuRow.modelData.label || ""
                   textFormat: Text.PlainText
-                  color: menuRow.modelData.danger ? Commons.Color.urgent : Commons.Color.popups.text
+                  color: menuRow.modelData.danger ? root.urgent : root.popupText
                   opacity: menuRow.modelData.disabled ? 0.4 : menuRow.modelData.secondary ? 0.65 : 1
                   font.family: root.uiFont
                   font.pixelSize: menuRow.modelData.secondary ? root.uiFontSize - 1 : root.uiFontSize
@@ -5192,7 +5200,7 @@ Item {
 
             Text {
               text: "Dock Settings"
-              color: Commons.Color.popups.text
+              color: root.popupText
               font.family: root.uiFont
               font.pixelSize: root.uiFontSize + 2
               font.weight: Font.DemiBold
@@ -5209,14 +5217,14 @@ Item {
                 Text {
                   id: sizeLabel
                   text: "Size"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize
                 }
                 Text {
                   anchors.right: parent.right
                   text: root.iconSize + " px"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   opacity: 0.65
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize - 1
@@ -5245,7 +5253,7 @@ Item {
                 width: parent.width - dividerSwitch.width - 12
                 wrapMode: Text.WordWrap
                 text: "Drag dividers to resize"
-                color: Commons.Color.popups.text
+                color: root.popupText
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
               }
@@ -5277,7 +5285,7 @@ Item {
                 width: parent.width - hideSwitch.width - 12
                 wrapMode: Text.WordWrap
                 text: "Automatically hide and show the Dock"
-                color: Commons.Color.popups.text
+                color: root.popupText
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
               }
@@ -5303,14 +5311,14 @@ Item {
                 Text {
                   id: delayLabel
                   text: "Hide delay"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize
                 }
                 Text {
                   anchors.right: parent.right
                   text: root.hideDelay === 0 ? "Immediately" : (root.hideDelay / 1000).toFixed(1) + " s"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   opacity: 0.65
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize - 1
@@ -5347,7 +5355,7 @@ Item {
                 width: parent.width - appsSwitch.width - 12
                 wrapMode: Text.WordWrap
                 text: "Show app launcher in Dock"
-                color: Commons.Color.popups.text
+                color: root.popupText
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
               }
@@ -5372,7 +5380,7 @@ Item {
                 width: parent.width - recentSwitch.width - 12
                 wrapMode: Text.WordWrap
                 text: "Show recent apps in Dock"
-                color: Commons.Color.popups.text
+                color: root.popupText
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
               }
@@ -5397,7 +5405,7 @@ Item {
                 width: parent.width - animSwitch.width - 12
                 wrapMode: Text.WordWrap
                 text: "Animate opening applications"
-                color: Commons.Color.popups.text
+                color: root.popupText
                 font.family: root.uiFont
                 font.pixelSize: root.uiFontSize
               }
@@ -5432,7 +5440,7 @@ Item {
                   id: resetText
                   anchors.centerIn: parent
                   text: "Reset to Defaults"
-                  color: Commons.Color.popups.text
+                  color: root.popupText
                   font.family: root.uiFont
                   font.pixelSize: root.uiFontSize
                 }
@@ -5516,7 +5524,7 @@ Item {
             anchors.centerIn: parent
             text: win.tipText
             textFormat: Text.PlainText
-            color: Commons.Color.popups.text
+            color: root.popupText
             font.family: root.uiFont
             font.pixelSize: root.uiFontSize - 1
           }

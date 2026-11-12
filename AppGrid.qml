@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
-import qs.Commons as Commons
 
 // Every app on one grid, like Launchpad: opened from the Apps icon on the dock, or by
 // Omarchy's Apps shortcut and menu item while Omarchy's own dock is off (see Dock.qml).
@@ -117,7 +116,7 @@ Scope {
       anchors.fill: parent
       // Black on any theme (the theme's background would only whiten a light theme's surround);
       // less of it on a light one, where black shows up more.
-      color: Qt.rgba(0, 0, 0, Commons.Color.background.hslLightness > 0.5 ? 0.35 : 0.55)
+      color: Qt.rgba(0, 0, 0, grid.dock.background.hslLightness > 0.5 ? 0.35 : 0.55)
       opacity: backdrop.opacity
       MouseArea {
         anchors.fill: parent
@@ -145,7 +144,7 @@ Scope {
       radius: grid.dock.menuRadius
       color: Util.alpha(grid.dock.surface, 0.95)
       border.width: 1
-      border.color: Util.alpha(Commons.Color.foreground, 0.25)
+      border.color: Util.alpha(grid.dock.foreground, 0.25)
       opacity: 0
       scale: 0.97
       NumberAnimation { id: grow; target: backdrop; property: "scale"; from: 0.97; to: 1; duration: 150; easing.type: Easing.OutCubic }
@@ -166,8 +165,8 @@ Scope {
         width: 320
         height: 36
         radius: grid.dock.rowRadius + 4
-        color: Util.alpha(Commons.Color.foreground, 0.08)
-        border.color: search.activeFocus ? Util.alpha(Commons.Color.accent, 0.8) : grid.dock.hairline
+        color: Util.alpha(grid.dock.foreground, 0.08)
+        border.color: search.activeFocus ? Util.alpha(grid.dock.accent, 0.8) : grid.dock.hairline
         border.width: 1
 
         Text {
@@ -176,7 +175,7 @@ Scope {
           verticalAlignment: Text.AlignVCenter
           visible: search.text.length === 0
           text: "Search"
-          color: Commons.Color.popups.text
+          color: grid.dock.popupText
           opacity: 0.45
           font.family: grid.dock.uiFont
           font.pixelSize: grid.dock.uiFontSize
@@ -189,8 +188,8 @@ Scope {
           anchors.rightMargin: 14
           verticalAlignment: TextInput.AlignVCenter
           clip: true
-          color: Commons.Color.popups.text
-          selectionColor: Util.alpha(Commons.Color.accent, 0.4)
+          color: grid.dock.popupText
+          selectionColor: Util.alpha(grid.dock.accent, 0.4)
           font.family: grid.dock.uiFont
           font.pixelSize: grid.dock.uiFontSize
           onTextChanged: {
@@ -232,7 +231,7 @@ Scope {
         anchors.topMargin: 48
         visible: grid.apps.length === 0
         text: "No apps found"
-        color: Commons.Color.popups.text
+        color: grid.dock.popupText
         opacity: 0.6
         font.family: grid.dock.uiFont
         font.pixelSize: grid.dock.uiFontSize + 2
@@ -283,9 +282,9 @@ Scope {
             anchors.fill: parent
             anchors.margins: 6
             radius: grid.dock.menuRadius
-            color: cellMouse.pressed ? Util.alpha(Commons.Color.foreground, 0.16)
+            color: cellMouse.pressed ? Util.alpha(grid.dock.foreground, 0.16)
                  : (cellItem.current || grid.menuEntry === cellItem.modelData)
-                   ? Util.alpha(Commons.Color.foreground, 0.08) : "transparent"
+                   ? Util.alpha(grid.dock.foreground, 0.08) : "transparent"
           }
 
           Image {
@@ -321,7 +320,7 @@ Scope {
             elide: Text.ElideRight
             text: cellItem.modelData.name
             textFormat: Text.PlainText
-            color: Commons.Color.popups.text
+            color: grid.dock.popupText
             font.family: grid.dock.uiFont
             font.pixelSize: grid.dock.uiFontSize - 1
           }
@@ -429,7 +428,7 @@ Scope {
                 anchors.verticalCenter: parent.verticalCenter
                 x: 10
                 text: modelData.label
-                color: Commons.Color.popups.text
+                color: grid.dock.popupText
                 font.family: grid.dock.uiFont
                 font.pixelSize: grid.dock.uiFontSize
               }

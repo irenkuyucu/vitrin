@@ -1,7 +1,6 @@
 import QtQuick
 import Quickshell
 import qs.Commons
-import qs.Commons as Commons
 
 // One dock icon: an app (pinned or running) or a folder shortcut.
 Item {
@@ -216,6 +215,7 @@ Item {
       visible: button.appsIcon
       anchors.fill: parent
       size: button.drawSize
+      accent: button.dock.accent
     }
 
     FilePile {

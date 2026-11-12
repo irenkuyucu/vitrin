@@ -84,6 +84,10 @@ the test entries from the config, and look at the dock.
   few seconds, then look at the dock and the app grid.
 - **Helper processes:** kill `icon-lookup.py` and `gsettings monitor` by their exact PIDs; both
   come back within a couple of seconds.
+- **Icon lookup only while needed:** a minute after the shell starts, `icon-lookup.py` is gone
+  from `ps`. Add a desktop entry (it starts again, then stops again after a minute), and
+  switch the icon theme with `gsettings set org.gnome.desktop.interface icon-theme <name>` while
+  it is stopped: the dock's icons change at once, and change back when you restore the theme.
 - **Folder watcher keeps dying:** kill the dock's `inotifywait` (`ps -eo pid,args`, the one with
   `create,delete,moved_to`) by its PID several times in a row, right after it comes back: it
   restarts after 2 s, then 4, then 8 (up to a minute), and a watcher that ran for 10 s or more

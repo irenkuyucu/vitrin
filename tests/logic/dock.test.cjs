@@ -657,6 +657,75 @@ describe("runRow", () => {
 
 // ------------------------------------------------------------------ icons
 
+describe("the icon lookup program (runs only while there is something to look up)", () => {
+  function lookup(state = {}, root = {}) {
+    const writes = [];
+    const program = { running: false, idleStop: false, quickDeaths: 0, write: t => writes.push(t), ...state };
+    const idle = { restarts: 0, restart() { this.restarts++; } };
+    const env = dock({ root: { iconsWanted: {}, themeIcons: {}, mimeIconCache: {}, iconTheme: "old", ...root },
+      globals: { iconLookup: program, iconLookupIdle: idle } });
+    return { env, program, writes, idle };
+  }
+
+  it("starts when icons are wanted, and keeps them until it runs", () => {
+    const { env, program, writes } = lookup({}, { iconsWanted: { a: true } });
+    env.root.askForIcons();
+    assert.equal(program.running, true);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(Object.keys(env.root.iconsWanted), ["a"]);
+  });
+
+  it("asks for them once it runs, and counts that as activity", () => {
+    const { env, writes, idle } = lookup({ running: true }, { iconsWanted: { a: true, b: true } });
+    env.root.askForIcons();
+    assert.deepEqual(writes, ["a\nb\n@flush\n"]);
+    assert.deepEqual(env.root.iconsWanted, {});
+    assert.equal(idle.restarts, 1);
+  });
+
+  it("stays stopped when nothing is wanted", () => {
+    const { env, program } = lookup();
+    env.root.askForIcons();
+    assert.equal(program.running, false);
+  });
+
+  it("waits while it is stopping for being idle, then asks again", () => {
+    const { env, program, writes } = lookup({ running: true, idleStop: true }, { iconsWanted: { a: true } });
+    env.root.askForIcons();
+    assert.deepEqual(writes, []);
+    assert.deepEqual(Object.keys(env.root.iconsWanted), ["a"]);
+    assert.equal(program.running, true);
+  });
+
+  it("isn't started again once it keeps dying", () => {
+    const { env, program } = lookup({ quickDeaths: 5 }, { iconsWanted: { a: true } });
+    env.root.askForIcons();
+    assert.equal(program.running, false);
+  });
+
+  it("asks for everything in use again when the theme changes, naming the theme first", () => {
+    const { env, writes } = lookup({ running: true }, { themeIcons: { x: "file:///x", y: "" }, iconsWanted: { z: true } });
+    env.root.useIconTheme("new");
+    assert.equal(env.root.iconTheme, "new");
+    assert.equal(writes[0], "@theme new\n");
+    assert.deepEqual(writes[1].trim().split("\n").sort(), ["@flush", "x", "y", "z"]);
+  });
+
+  it("starts for a theme change while stopped (it reads the theme itself), and keeps what was in use", () => {
+    const { env, program, writes } = lookup({}, { themeIcons: { x: "file:///x" } });
+    env.root.useIconTheme("new");
+    assert.equal(program.running, true);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(Object.keys(env.root.iconsWanted), ["x"]);
+  });
+
+  it("ignores a theme it already uses", () => {
+    const { env, program } = lookup({}, { themeIcons: { x: "file:///x" }, iconTheme: "same" });
+    env.root.useIconTheme("same");
+    assert.equal(program.running, false);
+  });
+});
+
 describe("icons", () => {
   it("pickIcon skips candidates known to be broken and ends in the letter tile", () => {
     const env = dock({ root: { iconExtents: { bad: false, good: { l: 0 } } } });

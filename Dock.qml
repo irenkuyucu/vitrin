@@ -771,27 +771,63 @@ Item {
     return Quickshell.iconPath(name, true)
   }
 
+  // The lookup program only runs while there is something to look up: it starts when icons are
+  // asked for and stops after a quiet minute (it holds about 17 MB, and icons are asked for in
+  // bursts: at startup, when apps come and go, when the theme changes).
   function askForIcons() {
     var names = Object.keys(root.iconsWanted)
-    if (names.length === 0 || !iconLookup.running) return
+    if (names.length === 0) return
+    if (!iconLookup.running) {
+      if (iconLookup.quickDeaths < 5) iconLookup.running = true      // (asks again once it runs)
+      return
+    }
+    if (iconLookup.idleStop) return                                  // (stopping: asks again once it has)
     root.iconsWanted = ({})
     iconLookup.write(names.join("\n") + "\n@flush\n")
+    iconLookupIdle.restart()
+  }
+
+  // Everything in use is asked for again: the theme or the installed apps changed.
+  function askForAllIcons() {
+    var names = Object.keys(root.themeIcons).concat(Object.keys(root.iconsWanted))
+    for (var i = 0; i < names.length; i++) root.iconsWanted[names[i]] = true
+    root.askForIcons()
+  }
+
+  Timer {
+    id: iconLookupIdle
+    interval: 60000
+    onTriggered: {
+      if (!iconLookup.running || Object.keys(root.iconsWanted).length > 0) return
+      iconLookup.idleStop = true
+      iconLookup.running = false
+    }
   }
 
   Process {
     id: iconLookup
-    running: true
     stdinEnabled: true
     command: ["python3", "-I", root.script("icon-lookup.py")]
     property double startedAt: 0
     property int quickDeaths: 0            // stops soon after starting, in a row (see iconToolDied)
     property bool restarted: false
+    property bool idleStop: false          // stopped on purpose, for having been idle
     onRunningChanged: if (running) {
       startedAt = Date.now()
       Qt.callLater(root.askForIcons)
-      if (restarted) iconRefresh.restart()   // (a new one knows nothing: everything in use is asked again)
+      if (restarted) {                       // (a new one after a crash knows nothing: everything in use is asked again)
+        restarted = false
+        iconRefresh.restart()
+      }
     }
-    onExited: root.iconToolDied(iconLookup)
+    onExited: {
+      if (iconLookup.idleStop) {
+        iconLookup.idleStop = false
+        Qt.callLater(root.askForIcons)       // (anything asked for meanwhile starts it again)
+        return
+      }
+      root.iconToolDied(iconLookup)
+    }
     stdout: SplitParser {
       onRead: function(line) {
         if (line === "@done") {
@@ -885,9 +921,7 @@ Item {
     interval: 2000
     onTriggered: {
       root.mimeIconCache = ({})
-      var names = Object.keys(root.themeIcons).concat(Object.keys(root.iconsWanted))
-      root.iconsWanted = ({})
-      if (iconLookup.running && names.length) iconLookup.write(names.join("\n") + "\n@flush\n")
+      root.askForAllIcons()
     }
   }
 
@@ -895,10 +929,9 @@ Item {
     if (!name || name === root.iconTheme) return
     root.iconTheme = name
     root.mimeIconCache = ({})               // which names a theme has can differ
-    var names = Object.keys(root.themeIcons).concat(Object.keys(root.iconsWanted))
-    root.iconsWanted = ({})
-    if (!iconLookup.running) return
-    iconLookup.write("@theme " + name + "\n" + (names.length ? names.join("\n") + "\n" : "") + "@flush\n")
+    // (A lookup program that isn't running reads the current theme itself when it starts.)
+    if (iconLookup.running && !iconLookup.idleStop) iconLookup.write("@theme " + name + "\n")
+    root.askForAllIcons()
   }
 
   // ------------------------------------------------------------ icon fallbacks

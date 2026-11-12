@@ -122,7 +122,7 @@ describe("computeGroups", () => {
 
   describe("helper windows", () => {
     const entries = { portal: { id: "xdg-desktop-portal-gtk", noDisplay: true }, imv: { id: "imv", noDisplay: true },
-      gedit: { id: "gedit", noDisplay: false } };
+      gedit: { id: "gedit", noDisplay: false }, omasnap: { id: "omasnap", noDisplay: false } };
     const setup = (extra = {}) => {
       const e = dock({ root: { keyFor: id => id, certainEntryFor: id => entries[id] || null, ...extra } });
       return e;
@@ -165,6 +165,20 @@ describe("computeGroups", () => {
       for (const id of ids) assert.ok(e.constants.hiddenAppIds.includes(id), id);
       e.root.hiddenAppIds = e.constants.hiddenAppIds;
       assert.deepEqual(e.root.computeGroups(ids.map(appId => ({ appId }))).order, []);
+    });
+
+    it("leaves out omasnap's pinned captures but keeps its editor window (the shipped rule)", () => {
+      const g = setup().root.computeGroups([{ appId: "omasnap", title: "omasnap-pin 4242" }, { appId: "omasnap", title: "omasnap shot.png" }]);
+      assert.deepEqual(g.order, ["omasnap"]);
+      assert.equal(g.byKey["omasnap"].length, 1);
+      assert.equal(g.byKey["omasnap"][0].title, "omasnap shot.png");
+    });
+
+    it("shows hidden windows of an app listed under alwaysShow", () => {
+      const e = setup({ alwaysShow: ["omasnap", "org.omarchy.screensaver"] });
+      assert.equal(e.root.isHiddenWindow("omasnap", "omasnap-pin 1"), false);
+      assert.equal(e.root.isHiddenWindow("org.omarchy.screensaver", ""), false);
+      assert.equal(setup().root.isHiddenWindow("org.omarchy.screensaver", ""), true);
     });
 
     it("waits while the list of apps hasn't loaded yet, but not for ever", () => {

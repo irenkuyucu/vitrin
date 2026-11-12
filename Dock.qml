@@ -427,7 +427,7 @@ Item {
       for (var r = 0; r < cfg.recent.length; r++) {
         var entry = cfg.recent[r]
         if (!entry || typeof entry.key !== "string" || middle.indexOf(entry.key) !== -1
-            || root.hiddenAppIds.indexOf(entry.key) !== -1) continue
+            || (root.hiddenAppIds.indexOf(entry.key) !== -1 && root.alwaysShow.indexOf(entry.key) === -1)) continue
         middle.push(entry.key)
         if (typeof entry.quitAt === "number") quitAt[entry.key] = entry.quitAt
       }
@@ -1155,6 +1155,22 @@ Item {
   readonly property var hiddenAppIds: ["org.omarchy.screensaver", "WebcamOverlay-small",
     "WebcamOverlay-medium", "WebcamOverlay-large"]
 
+  // Windows of an app that are only sometimes in the way, found by the start of their title:
+  // omasnap's pinned captures (floating on every workspace) are references, not work in a
+  // window; its editor, when set to open as a window, is shown.
+  readonly property var hiddenWindows: [{ id: "omasnap", titleStart: "omasnap-pin " }]
+
+  // Whether a window stays out of the dock (an app listed in "alwaysShow" is never hidden).
+  function isHiddenWindow(appId, title) {
+    if (root.alwaysShow.indexOf(appId) !== -1) return false
+    if (root.hiddenAppIds.indexOf(appId) !== -1) return true
+    for (var i = 0; i < root.hiddenWindows.length; i++) {
+      var rule = root.hiddenWindows[i]
+      if (rule.id === appId && String(title || "").indexOf(rule.titleStart) === 0) return true
+    }
+    return false
+  }
+
   // An entry marked NoDisplay ("not an app to show") belongs to a helper: the portal's file chooser,
   // previewers, password prompts. Their windows stay out of the dock, as in Omarchy's own. A few
   // such entries are apps you open files in all the same, so their windows stay.
@@ -1407,7 +1423,7 @@ Item {
     var entriesMissing = !!_apps && _apps.length === 0 && !root.windowsSettled
     for (var i = 0; i < toplevels.length; i++) {
       var t = toplevels[i]
-      if (!t || !t.appId || root.hiddenAppIds.indexOf(t.appId) !== -1) continue
+      if (!t || !t.appId || root.isHiddenWindow(t.appId, t.title)) continue
       // A dialog or helper window (one with a parent window) belongs to its top-most
       // parent's app, never shown as an app of its own: e.g. an app's template chooser
       // or file picker that opens under a generic window id.
@@ -1519,7 +1535,7 @@ Item {
     for (var i = 0; i < toplevels.length; i++) {
       var appId = toplevels[i] && toplevels[i].appId
       if (!appId || toplevels[i].parent) continue    // grouped under its parent's app
-      if (root.hiddenAppIds.indexOf(appId) !== -1) continue
+      if (root.isHiddenWindow(appId, toplevels[i].title)) continue
       if (isHelperWindow(appId)) { reportHelper(appId); continue }
       var target = root.effectiveAliases[appId] || appId
       open[target] = true

@@ -178,6 +178,10 @@ the config file. The shell log names the ID of any window left out, and the line
 "alwaysShow": ["imv"]
 ```
 
+The same goes for the few windows Vitrin always leaves out because they are overlays, not
+work: the screensaver, the webcam overlay and omasnap's pinned captures (its editor window is
+shown). `alwaysShow` brings those back too, e.g. `"alwaysShow": ["omasnap"]`.
+
 To read the shell log:
 
 ```bash

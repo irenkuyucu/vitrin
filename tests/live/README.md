@@ -51,6 +51,8 @@ the test entries from the config, and look at the dock.
 - **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`
   (the window a crash notification opens). It joins your terminal's icon, and no extra icon
   appears, not even briefly.
+- **omasnap:** `omasnap --pin some.png` leaves no icon (nor a running dot); `omasnap --file some.png
+  --editor window` shows one. With `"alwaysShow": ["omasnap"]` the pin shows too.
 - **Icons of apps installed meanwhile:** install or remove a desktop entry and its icon, wait a
   few seconds, then look at the dock and the app grid.
 - **Helper processes:** kill `icon-lookup.py` and `gsettings monitor` by their exact PIDs; both

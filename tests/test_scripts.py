@@ -45,6 +45,7 @@ class Fixture(unittest.TestCase):
         self.log = self.base / "argv.json"
         self.env = dict(
             os.environ,
+            TMPDIR=str(self.base),
             HOME=str(self.base),
             XDG_CACHE_HOME=str(self.base / "cache"),
             XDG_DATA_HOME=str(self.base / "data"),
@@ -67,6 +68,16 @@ class Fixture(unittest.TestCase):
 
     def logged(self):
         return json.loads(self.log.read_text())
+
+    def limited_path(self, *tools):
+        """A PATH holding only these real tools (and the stubs), to see what a script does without the others."""
+        folder = self.base / "tools"
+        folder.mkdir(exist_ok=True)
+        for name in tools:
+            found = shutil.which(name)
+            if found and not (folder / name).exists():
+                (folder / name).symlink_to(found)
+        return f"{self.bin}:{folder}"
 
     def run_script(self, name, *args, timeout=10):
         return subprocess.run(["bash", str(SCRIPTS / name), *map(str, args)], env=self.env,
@@ -418,6 +429,66 @@ class LaunchTests(Fixture):
         self.run_script("launch.sh", "demo", "/tmp/a b")
         self.assertEqual(self.logged(), ["--app-id=org.omarchy.demo", "demo", "/tmp/a b"])
 
+    def notifier(self):
+        """A stand-in for Omarchy's notifier that writes what it was asked to show next to the log."""
+        self.stub("omarchy-notification-send", '#!/usr/bin/python3\nimport json, os, sys\n'
+                  'open(os.environ["TEST_LOG"] + ".notify", "w").write(json.dumps(sys.argv[1:]))\n')
+
+    def notified(self):
+        path = Path(str(self.log) + ".notify")
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def test_a_failure_through_uwsm_is_not_announced_twice(self):
+        # (uwsm-app shows its own "App failure" notification)
+        self.notifier()
+        self.entry(Path(self.env["XDG_DATA_HOME"]))
+        self.stub("uwsm-app", '#!/bin/bash\necho "Error: broken entry" >&2\nexit 1\n')
+        result = self.run_script("launch.sh", "demo")
+        self.assertEqual(result.returncode, 1)
+        self.assertIsNone(self.notified())
+
+    def test_an_app_that_fails_to_start_without_uwsm_is_reported(self):
+        self.notifier()
+        self.entry(Path(self.env["XDG_DATA_HOME"]))
+        (self.bin / "uwsm-app").unlink()
+        self.stub("gio", '#!/bin/bash\necho "Error: broken entry" >&2\nexit 1\n')
+        self.env["PATH"] = self.limited_path("bash", "awk", "mktemp", "head", "rm")
+        result = self.run_script("launch.sh", "demo")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.notified(), ["--app-name", "Vitrin", "-u", "normal", "Couldn't open Demo", "Error: broken entry"])
+
+    def test_an_app_that_starts_says_nothing(self):
+        self.notifier()
+        self.entry(Path(self.env["XDG_DATA_HOME"]))
+        result = self.run_script("launch.sh", "demo")
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(self.notified())
+
+    def test_an_app_that_isnt_installed_is_reported(self):
+        self.notifier()
+        result = self.run_script("launch.sh", "ghost", "/tmp/a")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.notified()[-2], "Couldn't open ghost")
+
+    def test_without_uwsm_an_entry_starts_through_gio(self):
+        path = self.entry(Path(self.env["XDG_DATA_HOME"]))
+        (self.bin / "uwsm-app").unlink()
+        self.recorder("gio")
+        self.env["PATH"] = self.limited_path("bash", "awk", "mktemp", "head", "rm")
+        result = self.run_script("launch.sh", "demo", "/tmp/a")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(self.logged(), ["launch", str(path), "/tmp/a"])
+
+    def test_without_uwsm_an_action_runs_its_own_command(self):
+        path = self.entry(Path(self.env["XDG_DATA_HOME"]))
+        path.write_text(path.read_text() + "\n[Desktop Action fresh]\nName=Fresh\nExec=demo --fresh %U\n")
+        (self.bin / "uwsm-app").unlink()
+        self.recorder("setsid")
+        self.env["PATH"] = self.limited_path("bash", "awk", "mktemp", "head", "rm")
+        result = self.run_script("launch.sh", "demo:fresh")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(self.logged(), ["-f", "demo", "--fresh"])
+
     def test_entries_in_xdg_data_dirs_are_found_for_file_drops(self):
         self.entry(Path(self.env["XDG_DATA_DIRS"]))
         result = self.run_script("launch.sh", "demo", "/tmp/a")
@@ -524,14 +595,8 @@ class ThumbnailWithoutMagickTests(Fixture):
     """No ImageMagick: no previews can be made, and nothing is written down as failed."""
 
     def test_nothing_is_recorded_as_failed(self):
-        tools = self.base / "tools"                 # (every tool the script needs, except magick)
-        tools.mkdir()
-        for name in ("bash", "stat", "grep", "tr", "awk", "sed", "head", "mkdir", "chmod", "mktemp",
-                     "rm", "mv", "timeout", "nice", "dirname", "cat"):
-            found = shutil.which(name)
-            if found:
-                (tools / name).symlink_to(found)
-        self.env["PATH"] = str(tools)
+        self.env["PATH"] = self.limited_path("bash", "stat", "grep", "tr", "awk", "sed", "head", "mkdir", "chmod",
+                                             "mktemp", "rm", "mv", "timeout", "nice", "dirname", "cat")   # (all but magick)
         thumbnailers = Path(self.env["XDG_DATA_HOME"]) / "thumbnailers"
         thumbnailers.mkdir(parents=True)
         (thumbnailers / "t.thumbnailer").write_text("[Thumbnailer Entry]\nExec=false %i %o\nMimeType=x/test;\n")

@@ -577,6 +577,35 @@ class ShowFileTests(Fixture):
         self.assertEqual(self.logged(), ["-f", "nautilus", "--select", str(self.file)])
 
 
+class TrashCountTests(Fixture):
+    def count(self):
+        return self.run_script("trash-count.sh").stdout.decode().strip()
+
+    def trash_files(self, *names):
+        folder = Path(self.env["XDG_DATA_HOME"]) / "Trash" / "files"
+        folder.mkdir(parents=True)
+        for name in names:
+            (folder / name).write_text("x")
+
+    def test_asks_gio_so_other_drives_count_too(self):
+        self.stub("gio", '#!/bin/bash\necho "uri: trash:///"\necho "  trash::item-count: 7"\n')
+        self.assertEqual(self.count(), "7")
+
+    def test_counts_the_home_trash_without_gio(self):
+        self.stub("gio", "#!/bin/bash\nexit 1\n")
+        self.trash_files("a", ".hidden")
+        self.assertEqual(self.count(), "2")
+
+    def test_follows_xdg_data_home(self):
+        self.stub("gio", "#!/bin/bash\nexit 1\n")
+        self.trash_files("a", "b", "c")
+        self.assertEqual(self.count(), "3")           # (the files are under XDG_DATA_HOME, not ~/.local/share)
+
+    def test_an_empty_trash_is_zero(self):
+        self.stub("gio", "#!/bin/bash\nexit 1\n")
+        self.assertEqual(self.count(), "0")
+
+
 class PlacesTests(Fixture):
     """The system's defaults the dock reads at startup: file manager, Downloads, Trash."""
 

@@ -1982,7 +1982,7 @@ Item {
   Process {
     id: trashCounter
     running: true                // once at startup, then see refreshTrash
-    command: ["bash", "-c", "ls -A \"$HOME/.local/share/Trash/files\" 2>/dev/null | wc -l"]
+    command: ["bash", root.script("trash-count.sh")]
     stdout: StdioCollector {
       onStreamFinished: root.trashCount = parseInt(text) || 0
     }
@@ -2226,7 +2226,7 @@ Item {
   // scripts/watch-folders.sh), so stacks and the Trash's full/empty icon update right away and
   // nothing runs in between, with hiding on or off. (The dock sliding up also refreshes them.)
   // Only while Vitrin is the dock in use (see dockAllowed); restarted when the folders change.
-  readonly property string trashFilesDir: root.home + "/.local/share/Trash/files"
+  readonly property string trashFilesDir: (Quickshell.env("XDG_DATA_HOME") || (root.home + "/.local/share")) + "/Trash/files"
   readonly property var watchedDirs: {
     if (!root.dockAllowed) return []
     var dirs = []

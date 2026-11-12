@@ -305,6 +305,7 @@ Item {
     property real pressY: 0
     property bool dragging: false
     property bool suppressClick: false
+    property bool dragLost: false
     readonly property int dragThreshold: 8
 
     // Scrolling is for the dock (when it overflows), not for the icon.
@@ -316,6 +317,7 @@ Item {
     onPressed: function(m) {
       pressX = m.x
       pressY = m.y
+      dragLost = false
       // A click that just closed a menu is used up by closing it (like macOS/GNOME),
       // so it doesn't also open or switch to this icon.
       if (button.window.menuByKey) button.window.closeKeyMenu()   // a menu opened from the keyboard
@@ -326,6 +328,9 @@ Item {
     onPositionChanged: function(m) {
       // Files (always first) and the Trash (always last) stay put.
       if (!(m.buttons & Qt.LeftButton)) return
+      // The dock dropped the drag (an app opened or closed under it): the gesture is over.
+      if (dragging && button.window.dragFrom === -1) { dragging = false; dragLost = true }
+      if (dragLost) return
       if (button.isFolder ? button.dock.isTrash(button.item) : button.dock.isFixed(button.item.key)) return
       if (!dragging && Math.abs(m.x - pressX) + Math.abs(m.y - pressY) > dragThreshold) {
         if (button.isFolder) {
@@ -339,6 +344,7 @@ Item {
     }
 
     onReleased: function(m) {
+      if (dragLost) suppressClick = true
       if (!dragging) return
       dragging = false
       suppressClick = true

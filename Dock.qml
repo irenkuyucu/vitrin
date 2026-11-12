@@ -3902,9 +3902,10 @@ Item {
           if (win.menuOpen && win.menuIsFolder && !win.menuConfirming && root.isTrash(win.menuItem))
             win.menuList = root.menuRows(win.menuItem, true)
         }
-        // Apps opening or closing mid-drag rebuild the icons; drop the drag rather than
-        // move the wrong one.
-        function onItemsChanged() {
+        // Apps opening or closing mid-drag change the icons' order; drop the drag rather
+        // than move the wrong one. (Not on items: that is rebuilt whenever any window's
+        // title changes, which would end a drag at random.)
+        function onLayoutChanged() {
           if (win.dragFrom !== -1 && !win.dragFolder) win.cancelDrag()
         }
         function onFoldersChanged() {

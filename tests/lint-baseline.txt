@@ -1,4 +1,4 @@
-AppGrid.qml unqualified 56
+AppGrid.qml unqualified 61
 AppsIcon.qml unqualified 11
 Dock.qml incompatible-type 2
 Dock.qml missing-property 1

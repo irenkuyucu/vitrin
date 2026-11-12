@@ -775,6 +775,7 @@ Item {
         if (tab <= 0) return
         var path = line.slice(tab + 1)
         root.iconAnswers[line.slice(0, tab)] = path ? Util.fileUrl(path) : ""
+        if (path) root.resolvedIconFiles[Util.fileUrl(path)] = true
       }
     }
   }
@@ -914,6 +915,15 @@ Item {
     url = String(url || "")
     if (url === root.letterIcon || url === root.appsIcon) return ""
     return url.indexOf("image://") === 0 || root.iconExtents[url] ? url : ""
+  }
+
+  // Icon files the lookup found exist, so the app grid's images may load them at once, instead
+  // of waiting for the measurer (which takes a moment for the many icons of a first opening).
+  property var resolvedIconFiles: ({})
+  function gridIcon(url) {
+    url = String(url || "")
+    if (url === root.letterIcon || url === root.appsIcon) return ""
+    return url.indexOf("image://") === 0 || root.resolvedIconFiles[url] || root.iconExtents[url] ? url : ""
   }
 
   function pickIcon(candidates) {

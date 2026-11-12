@@ -96,7 +96,7 @@ Scope {
       if (!visible) return
       search.text = ""
       search.forceActiveFocus()
-      appsView.currentIndex = 0
+      appsView.currentIndex = -1
       appsView.positionViewAtBeginning()
       fade.restart()
     }
@@ -153,7 +153,7 @@ Scope {
           onTextChanged: {
             grid.query = text
             grid.menuEntry = null
-            appsView.currentIndex = 0
+            appsView.currentIndex = text.length > 0 ? 0 : -1      // (what's highlighted is what Enter opens)
             appsView.positionViewAtBeginning()
           }
 
@@ -169,10 +169,13 @@ Scope {
               if (appsView.currentIndex >= 0 && appsView.currentIndex < grid.apps.length)
                 grid.launch(grid.apps[appsView.currentIndex])
               break
-            case Qt.Key_Left: appsView.moveCurrentIndexLeft(); break
-            case Qt.Key_Right: appsView.moveCurrentIndexRight(); break
-            case Qt.Key_Up: appsView.moveCurrentIndexUp(); break
-            case Qt.Key_Down: appsView.moveCurrentIndexDown(); break
+            case Qt.Key_Left: case Qt.Key_Right: case Qt.Key_Up: case Qt.Key_Down:
+              if (appsView.currentIndex < 0) { if (grid.apps.length > 0) appsView.currentIndex = 0 }     // (the first arrow selects the first app)
+              else if (event.key === Qt.Key_Left) appsView.moveCurrentIndexLeft()
+              else if (event.key === Qt.Key_Right) appsView.moveCurrentIndexRight()
+              else if (event.key === Qt.Key_Up) appsView.moveCurrentIndexUp()
+              else appsView.moveCurrentIndexDown()
+              break
             default: return
             }
             event.accepted = true
@@ -247,7 +250,9 @@ Scope {
             height: 64
             sourceSize.width: 128
             sourceSize.height: 128
-            source: grid.dock.displayableIcon(cellItem.iconUrl)
+            source: grid.dock.gridIcon(cellItem.iconUrl)
+            // A file that won't load is skipped from now on (the next candidate is used).
+            onStatusChanged: if (status === Image.Error && String(source) !== "") grid.dock.finishMeasurement(String(source), false)
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -291,6 +296,10 @@ Scope {
               grid.pointerY = p.y
               if (known && !grid.menuEntry) appsView.currentIndex = cellItem.index
             }
+            // The pointer leaving the app takes the highlight with it (not when the grid is merely
+            // scrolling under a still pointer, or a menu is open).
+            onContainsMouseChanged: if (!containsMouse && !appsView.moving && !grid.menuEntry
+                                        && appsView.currentIndex === cellItem.index) appsView.currentIndex = -1
             onClicked: function(m) {
               if (m.button === Qt.RightButton) {
                 var p = mapToItem(backdrop, m.x, m.y)

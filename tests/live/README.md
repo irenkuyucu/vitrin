@@ -40,6 +40,10 @@ the test entries from the config, and look at the dock.
 
 - **Spring-loading:** minimize a window (move it to `special:minimized`), open a stack, drag a
   tile onto the app's icon and hold: the window comes back to the current workspace.
+- **App grid highlight:** open the grid (nothing is highlighted), move the pointer over an app
+  (it highlights) and then onto empty space (it clears); the arrow keys and typing still select.
+  Close it by clicking the empty margin, never a spot that could be an app.
+- **App grid icons:** right after a shell restart, the first opening shows real icons, not letter tiles.
 - **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),
   create it (the badge goes), delete it (the badge returns); try a path several levels down.
 - **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`

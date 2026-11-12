@@ -11,6 +11,7 @@ function dock(overrides = {}) {
   const globals = {
     Quickshell: { env: () => "/home/u", iconPath: name => (name ? "image://icon/" + name : ""), execDetached: c => calls.push(["exec", c]) },
     configRetryTimer: { stop: () => calls.push(["retry stop"]), restart: () => calls.push(["retry restart"]) },
+    firstRunTimer: { start: () => {}, stop: () => {} },
     iconLookup: { running: false, write: () => {} },
     Util: { fileUrl: p => "file://" + p },
     configFile: { setText: t => calls.push(["write", t]) },
@@ -370,6 +371,51 @@ describe("applyConfig", () => {
       assert.deepEqual(env.calls.at(-1), ["retry restart"], text);
     }
   });
+
+  it("drops a first run that was under way when the file turns up", () => {
+    let stopped = false;
+    const withTimer = dock({ root: { applySettings: () => true, firstRun: true }, globals: { firstRunTimer: { stop: () => { stopped = true; } } } });
+    withTimer.root.applyConfig(config({ pins: ["files", "a"] }));
+    assert.equal(withTimer.root.firstRun, false);
+    assert.ok(stopped);
+    assert.deepEqual(withTimer.root.pins, ["files", withTimer.root.appsKey, "a"]);
+  });
+});
+
+describe("configLoadFailed", () => {
+  function failed(missing, root = {}) {
+    const env = dock({ root: { ...root, startFirstRun: () => {} } });
+    let started = 0;
+    env.root.startFirstRun = () => started++;
+    env.root.configLoadFailed(missing);
+    return { env, started };
+  }
+
+  it("sets up the default dock when there is no file", () => {
+    const { env, started } = failed(true);
+    assert.equal(started, 1);
+    assert.equal(env.root.configBroken, false);
+  });
+
+  it("starts over when the file is deleted while the dock runs, even after it was unreadable", () => {
+    const { env, started } = failed(true, { configLoaded: true, configBroken: true });
+    assert.equal(started, 1);
+    assert.equal(env.root.configBroken, false);
+  });
+
+  it("never overwrites a file that exists but can't be read: defaults in memory, nothing saved", () => {
+    const { env, started } = failed(false, { configLoaded: false });
+    assert.equal(started, 1);                    // (the dock still shows something)
+    assert.equal(env.root.configBroken, true);   // (and saveConfig refuses to write)
+    env.root.saveConfig();
+    assert.deepEqual(names(env), []);
+  });
+
+  it("leaves a dock that has loaded alone when its file becomes unreadable", () => {
+    const { env, started } = failed(false, { configLoaded: true });
+    assert.equal(started, 0);
+    assert.equal(env.root.configBroken, true);
+  });
 });
 
 describe("saveConfig", () => {
@@ -458,6 +504,44 @@ describe("paths", () => {
   it("builds file URIs the way GIO does, so thumbnails are shared", () => {
     assert.equal(env.root.fileUri("/tmp/ö #%.png"), "file:///tmp/%C3%B6%20%23%25.png");
     assert.equal(env.root.fileUri("/tmp/a;b:c@d&e=f+$x,?.png"), "file:///tmp/a%3Bb:c@d&e=f+$x,%3F.png");
+  });
+
+  it("turns a dropped file URI into a path", () => {
+    assert.equal(env.root.localPath("file:///tmp/a%20b.png"), "/tmp/a b.png");
+    assert.equal(env.root.localPath("/tmp/plain.png"), "/tmp/plain.png");
+  });
+
+  it("keeps the text of a dropped URI whose % isn't an escape (some apps don't escape names)", () => {
+    assert.equal(env.root.localPath("file:///tmp/100%.png"), "/tmp/100%.png");
+    assert.equal(env.root.localPath("file:///tmp/50%sale.png"), "/tmp/50%sale.png");
+  });
+});
+
+describe("watchers that keep stopping", () => {
+  it("wait longer each time, up to a minute", () => {
+    const env = dock();
+    const delays = [1, 2, 3, 4, 5, 6, 7, 20].map(n => env.root.watcherRetryDelay(n));
+    assert.deepEqual(delays, [2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000]);
+  });
+
+  function died(failures, ranFor) {
+    const timer = { interval: 2000, restart() { this.restarted = true; } };
+    const env = dock({ root: { watcherFailures: failures }, globals: { watcherRestart: timer } });
+    env.root.watcherDied(Date.now() - ranFor);
+    return { env, timer };
+  }
+
+  it("count failures in a row", () => {
+    const { env, timer } = died(2, 500);
+    assert.equal(env.root.watcherFailures, 3);
+    assert.equal(timer.interval, 8000);
+    assert.ok(timer.restarted);
+  });
+
+  it("start over after one that had been running for a while", () => {
+    const { env, timer } = died(5, 30000);
+    assert.equal(env.root.watcherFailures, 1);
+    assert.equal(timer.interval, 2000);
   });
 });
 

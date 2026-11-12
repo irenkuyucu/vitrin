@@ -84,6 +84,13 @@ the test entries from the config, and look at the dock.
   few seconds, then look at the dock and the app grid.
 - **Helper processes:** kill `icon-lookup.py` and `gsettings monitor` by their exact PIDs; both
   come back within a couple of seconds.
+- **Folder watcher keeps dying:** kill the dock's `inotifywait` (`ps -eo pid,args`, the one with
+  `create,delete,moved_to`) by its PID several times in a row, right after it comes back: it
+  restarts after 2 s, then 4, then 8 (up to a minute), and a watcher that ran for 10 s or more
+  starts the count over.
+- **Config file unreadable:** `chmod 000 ~/.config/omarchy/vitrin.json`, then `touch` it. The log
+  says it exists but can't be read, nothing is written; after `chmod 644` and another `touch`
+  the file is read again and is unchanged.
 
 ## Pitfalls
 

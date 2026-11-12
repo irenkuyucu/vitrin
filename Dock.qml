@@ -260,10 +260,27 @@ Item {
     watchChanges: true
     onFileChanged: reload()
     onLoaded: root.applyConfig(text())
-    onLoadFailed: function(error) {
-      // First run: no config yet, so set up the default dock (see "first run").
-      root.startFirstRun()
+    onLoadFailed: function(error) { root.configLoadFailed(error === FileViewError.FileNotFound) }
+    onSaveFailed: function(error) {
+      console.warn(root.pluginId + ": couldn't save " + root.configPath + " (" + FileViewError.toString(error)
+        + "); changes since the last save are kept only until the dock restarts")
     }
+  }
+
+  // The file isn't there (first run, or deleted while the dock runs: it starts over), or it is
+  // but can't be read (permissions, a folder in its place). The latter must never end up
+  // overwritten with defaults: the dock runs on defaults in memory and saves nothing until the
+  // file reads again (applyConfig), and one it already has loaded is left as it is.
+  function configLoadFailed(missing) {
+    if (missing) {
+      root.configBroken = false
+    } else {
+      if (!root.configBroken) console.warn(root.pluginId + ": " + root.configPath + " exists but can't be read. "
+        + "Not saving until it can be.")
+      root.configBroken = true
+      if (root.configLoaded) return
+    }
+    root.startFirstRun()
   }
 
   // ------------------------------------------------------------ first run
@@ -383,6 +400,10 @@ Item {
     configRetryTimer.stop()
     root.configFinalCheck = false
     root.configBroken = false
+    // The file is there after all (it came back while first-run setup was under way): what it
+    // holds is the dock, not the defaults being worked out.
+    root.firstRun = false
+    firstRunTimer.stop()
     var needsSave = false
 
     if (cfg.aliases && typeof cfg.aliases === "object" && !Array.isArray(cfg.aliases)) {
@@ -2148,6 +2169,8 @@ Item {
       }
     }
     property int stops: 0                  // stops asked for whose exit hasn't come yet
+    property double startedAt: 0
+    onRunningChanged: if (running) startedAt = Date.now()
     // 0: nothing to watch (all folders missing); anything else: it stopped unexpectedly, so
     // try again shortly.
     onExited: function(code) {
@@ -2156,7 +2179,7 @@ Item {
         if (folderWatcher.stops === 0) Qt.callLater(root.startWatcher)
         return
       }
-      if (code !== 0 && root.watchedDirs.length > 0) watcherRestart.restart()
+      if (code !== 0 && root.watchedDirs.length > 0) root.watcherDied(folderWatcher.startedAt)
     }
   }
 
@@ -2166,6 +2189,8 @@ Item {
   Process {
     id: missingWatcher
     property int stops: 0
+    property double startedAt: 0
+    onRunningChanged: if (running) startedAt = Date.now()
     stdout: SplitParser {
       onRead: function(line) { missingArrived.restart() }
     }
@@ -2175,7 +2200,7 @@ Item {
         if (missingWatcher.stops === 0) Qt.callLater(root.startMissingWatcher)
         return
       }
-      if (code !== 0 && root.watchedDirs.length > 0) watcherRestart.restart()
+      if (code !== 0 && root.watchedDirs.length > 0) root.watcherDied(missingWatcher.startedAt)
     }
   }
   Timer {
@@ -2191,6 +2216,19 @@ Item {
     id: watcherRestart
     interval: 2000
     onTriggered: root.restartWatcher()
+  }
+  // A watcher that keeps stopping (inotify out of watches, say) is started again after 2 s,
+  // then 4, 8, ... up to a minute, instead of every 2 s for good. One that had been running
+  // for a while starts the count over.
+  property int watcherFailures: 0
+  function watcherRetryDelay(failures) {
+    return Math.min(60000, 2000 * Math.pow(2, Math.max(0, failures - 1)))
+  }
+  function watcherDied(startedAt) {
+    if (Date.now() - startedAt > 10000) root.watcherFailures = 0
+    root.watcherFailures++
+    watcherRestart.interval = root.watcherRetryDelay(root.watcherFailures)
+    watcherRestart.restart()
   }
   function restartWatcher() {
     if (folderWatcher.running) {
@@ -2389,7 +2427,9 @@ Item {
   // ------------------------------------------------------------ dropping files
   function localPath(url) {
     var s = String(url)
-    return s.indexOf("file://") === 0 ? decodeURIComponent(s.slice(7)) : s
+    if (s.indexOf("file://") !== 0) return s
+    // (Some apps send names that aren't escaped, so a lone "%" isn't a valid escape: keep the text.)
+    try { return decodeURIComponent(s.slice(7)) } catch (e) { return s.slice(7) }
   }
 
   // See scripts/move-into-folder.sh: moved on the same drive, copied from another,

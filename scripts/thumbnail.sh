@@ -69,6 +69,27 @@ stamped_mtime() {
 
 shopt -u patsub_replacement 2>/dev/null   # (bash 5.2+: a "&" in a path would mean the matched text)
 
+# Fills a word's codes in one pass (%i file, %u its URI, %o the output file, %s the size, %% a
+# percent sign) into $filled. One pass, so a code-looking part of a file name ("50%sale.png")
+# is never taken for a code itself.
+fill_codes() {
+  local s=$1 path=$2 uri=$3 out=$4 i c
+  filled=""
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    if [ "$c" = % ]; then
+      case ${s:i+1:1} in
+        i) filled+=$path; i=$((i + 1)); continue ;;
+        u) filled+=$uri; i=$((i + 1)); continue ;;
+        o) filled+=$out; i=$((i + 1)); continue ;;
+        s) filled+=256; i=$((i + 1)); continue ;;
+        %) filled+=%; i=$((i + 1)); continue ;;
+      esac
+    fi
+    filled+=$c
+  done
+}
+
 one() {
   local mime=$1 path=$2 uri=$3 hash=$4 mtime f exec tmp args=() word
   mtime=$(stat -c %Y -- "$path" 2>/dev/null) || return
@@ -83,8 +104,8 @@ one() {
   tmp=$(mktemp --suffix=.png "$cache/large/.vitrin-XXXXXX") || return
   split_exec "$exec"
   for word in "${words[@]}"; do
-    word=${word//%i/$path}; word=${word//%u/$uri}; word=${word//%o/$tmp}; word=${word//%s/256}
-    args+=("$word")
+    fill_codes "$word" "$path" "$uri" "$tmp"
+    args+=("$filled")
   done
   if timeout 5 nice -n 10 "${args[@]}" >/dev/null 2>&1 && [ -s "$tmp" ] \
      && magick "$tmp" -set Thumb::URI "$uri" -set Thumb::MTime "$mtime" "PNG:$tmp.stamped" 2>/dev/null; then

@@ -487,6 +487,18 @@ class ThumbnailTests(Fixture):
         path, _ = self.make("a & b.png")
         self.assertEqual(self.logged()[0], str(path))
 
+    def test_code_looking_parts_of_a_name_stay_as_they_are(self):
+        # (a name with "%s" or "%o" in it was rewritten as if it were the size or output code)
+        for name in ("50%sale.png", "100%off.png", "a%ub%i.png"):
+            with self.subTest(name=name):
+                path, result = self.make(name)
+                self.assertIn(b" new ", result.stdout)
+                self.assertEqual(self.logged()[0], str(path))
+
+    def test_percent_percent_is_a_percent_sign(self):
+        self.make(command="preview --tag=100%% %i %o")
+        self.assertEqual(self.logged()[0], "--tag=100%")
+
     def test_quoted_words_in_the_command(self):
         spaced = self.bin / "my tools"
         spaced.mkdir()

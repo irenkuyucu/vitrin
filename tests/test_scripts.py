@@ -520,6 +520,28 @@ class ThumbnailTests(Fixture):
         self.assertFalse(self.log.exists())
 
 
+class ThumbnailWithoutMagickTests(Fixture):
+    """No ImageMagick: no previews can be made, and nothing is written down as failed."""
+
+    def test_nothing_is_recorded_as_failed(self):
+        tools = self.base / "tools"                 # (every tool the script needs, except magick)
+        tools.mkdir()
+        for name in ("bash", "stat", "grep", "tr", "awk", "sed", "head", "mkdir", "chmod", "mktemp",
+                     "rm", "mv", "timeout", "nice", "dirname", "cat"):
+            found = shutil.which(name)
+            if found:
+                (tools / name).symlink_to(found)
+        self.env["PATH"] = str(tools)
+        thumbnailers = Path(self.env["XDG_DATA_HOME"]) / "thumbnailers"
+        thumbnailers.mkdir(parents=True)
+        (thumbnailers / "t.thumbnailer").write_text("[Thumbnailer Entry]\nExec=false %i %o\nMimeType=x/test;\n")
+        path = self.base / "file.dat"
+        path.write_text("x")
+        result = self.run_script("thumbnail.sh", "x/test", path, path.as_uri(), "abc")
+        self.assertEqual(result.stdout, b"abc none\n")
+        self.assertEqual(list((self.base / "cache" / "thumbnails" / "fail" / "vitrin").glob("*")), [])
+
+
 # ---------------------------------------------------------------- pointer settings
 
 class CursorTests(Fixture):

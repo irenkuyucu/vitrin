@@ -99,6 +99,9 @@ one() {
   f="$cache/fail/vitrin/$hash.png"
   if [ -f "$f" ] && [ "$(stamped_mtime "$f")" = "$mtime" ]; then echo "$hash failed"; return; fi
 
+  # Making a preview needs ImageMagick (to stamp it); without it, no preview can be made, and
+  # nothing is recorded as failed either: that would only be wrong once it is installed.
+  command -v magick >/dev/null || { echo "$hash none"; return; }
   exec=$(exec_for "$mime")
   if [ -z "$exec" ]; then echo "$hash none"; return; fi
   tmp=$(mktemp --suffix=.png "$cache/large/.vitrin-XXXXXX") || return

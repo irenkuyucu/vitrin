@@ -577,6 +577,37 @@ class ShowFileTests(Fixture):
         self.assertEqual(self.logged(), ["-f", "nautilus", "--select", str(self.file)])
 
 
+class PlacesTests(Fixture):
+    """The system's defaults the dock reads at startup: file manager, Downloads, Trash."""
+
+    def setUp(self):
+        super().setUp()
+        self.downloads = self.base / "Downloads"
+        self.downloads.mkdir()
+        self.stub("xdg-mime", "#!/bin/bash\necho folio.desktop\n")
+        self.stub("xdg-user-dir", f"#!/bin/bash\necho '{self.downloads}'\n")
+        self.stub("gio", "#!/bin/bash\n"
+                         'case "${@: -1}" in trash:///) echo "  standard::display-name: Bin";; '
+                         '*) echo "  standard::display-name: Mine";; esac\n')
+
+    def lines(self):
+        return self.run_script("default-places.sh").stdout.decode().split("\n")[:4]
+
+    def test_reports_the_default_manager_without_its_extension(self):
+        self.assertEqual(self.lines()[0], "folio")
+
+    def test_reports_the_downloads_folder_and_the_names_as_the_file_manager_shows_them(self):
+        self.assertEqual(self.lines(), ["folio", str(self.downloads), "Mine", "Bin"])
+
+    def test_no_default_manager_is_an_empty_line(self):
+        self.stub("xdg-mime", "#!/bin/bash\n")
+        self.assertEqual(self.lines()[0], "")
+
+    def test_a_missing_downloads_folder_is_left_out(self):
+        self.stub("xdg-user-dir", f"#!/bin/bash\necho '{self.base}'\n")      # (what it says when none is set: the home folder)
+        self.assertEqual(self.lines()[1:3], ["", ""])
+
+
 # ---------------------------------------------------------------- previews
 
 @needs("magick")

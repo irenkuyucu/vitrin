@@ -836,7 +836,21 @@ Item {
   // removed ones don't), so everything in use is looked up again once the install settles.
   Connections {
     target: DesktopEntries.applications
-    function onValuesChanged() { iconRefresh.restart() }
+    function onValuesChanged() { iconRefresh.restart(); iconWarm.restart() }
+  }
+  // The app grid's icons are looked up ahead of time (a moment after the apps are known, and
+  // again when they change), so its first opening shows their final files at once: otherwise
+  // each icon would show the theme's provisional one and swap to the looked-up file a moment
+  // later, which showed as blinking.
+  Timer {
+    id: iconWarm
+    interval: 1000
+    running: true
+    onTriggered: {
+      var entries = DesktopEntries.applications.values
+      for (var i = 0; i < entries.length; i++)
+        if (entries[i] && !entries[i].noDisplay && entries[i].name) root.iconCandidatesFor(entries[i], String(entries[i].id))
+    }
   }
   Timer {
     id: iconRefresh

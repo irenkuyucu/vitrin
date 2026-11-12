@@ -302,7 +302,8 @@ Scope {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
-            visible: status === Image.Ready
+            // (While a different file loads, the old artwork stays instead of blinking out.)
+            visible: status === Image.Ready || status === Image.Loading
           }
           LetterIcon {
             anchors.centerIn: icon

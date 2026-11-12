@@ -43,7 +43,7 @@ the test entries from the config, and look at the dock.
 - **App grid highlight:** open the grid (nothing is highlighted), move the pointer over an app
   (it highlights) and then onto empty space (it clears); the arrow keys and typing still select.
   Close it by clicking the empty margin, never a spot that could be an app.
-- **App grid icons:** right after a shell restart, the first opening shows real icons, not letter tiles.
+- **App grid icons:** right after a shell restart, the first opening shows real icons, not letter tiles, and none swaps or blinks once the grid is open (log each icon's `source` and `status` in AppGrid.qml for a moment to see it).
 - **App grid panel:** it opens centered on a dimmed screen, whole columns wide; clicking the dim closes it. Look at it on a light theme too (`omarchy theme set "Catppuccin Latte"`, then set your own back).
 - **Touchpad scrolling (app grid, stacks):** `tests/live/vptr.py W H scroll -8 10` glides on after the last event (compare two screenshots a moment apart), `notch 3` still scrolls, and hovering an app afterwards highlights it. With a row half in view at the edge, hovering an app in it highlights it without moving the row. Feel is checked by hand on a real touchpad.
 - **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),

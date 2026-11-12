@@ -174,8 +174,8 @@ PopupWindow {
         model: stack.files
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        // Scrolls with momentum (Qt's own). Not while a file's menu is open: the files stay
-        // put under it, like the dock's other menus.
+        // Scrolls with momentum (a mouse wheel: Qt's own; a touchpad: GlideScroll). Not while a
+        // file's menu is open: the files stay put under it, like the dock's other menus.
         interactive: stack.tileMenuFile === null
         cacheBuffer: stack.tileHeight      // a row above and below, for smooth scrolling
         readonly property bool scrolls: contentHeight > height + 0.5
@@ -284,6 +284,9 @@ PopupWindow {
               }
             }
           }
+
+        // Touchpad swipes glide on after the fingers lift.
+        GlideScroll { parent: grid; anchors.fill: parent; view: grid; z: 10 }
 
         // Fades over the grid's top and bottom where more files are hidden.
         Rectangle {

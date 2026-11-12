@@ -2,6 +2,8 @@
 """Tiny zwlr_virtual_pointer client (raw Wayland wire protocol, no libraries).
 
 Usage: vptr.py W H  move X Y
+       vptr.py W H  scroll VALUE [COUNT]     (touchpad-style: finger source, VALUE px per event)
+       vptr.py W H  notch [COUNT]            (mouse wheel notches)
        vptr.py W H  click X Y [button]
        vptr.py W H  drag X1 Y1 X2 Y2 [hold_ms_at_end [X3 Y3]]   (press, move in steps, hold, release)
 W H is the logical size of the output the coordinates refer to.
@@ -88,6 +90,17 @@ def main():
 
     if cmd == "move":
         move(a[0], a[1])
+    elif cmd == "scroll":      # scroll Y_value [count]: finger-source smooth scroll, value in px units
+        wl.send(ptr, 5, struct.pack("<I", 1))       # axis_source: finger
+        for i in range(int(a[1]) if len(a) > 1 else 1):
+            v = int(float(a[0]) * 256)
+            wl.send(ptr, 3, struct.pack("<IIi", now_ms(), 0, v)); wl.send(ptr, 4); time.sleep(0.016)
+        wl.send(ptr, 6, struct.pack("<II", now_ms(), 0)); wl.send(ptr, 4)
+    elif cmd == "notch":       # notch [count]: mouse-wheel notches (down is positive)
+        for i in range(int(a[0]) if a else 1):
+            wl.send(ptr, 5, struct.pack("<I", 0))                      # axis_source: wheel
+            wl.send(ptr, 3, struct.pack("<IIi", now_ms(), 0, 15 * 256))
+            wl.send(ptr, 7, struct.pack("<IIii", now_ms(), 0, 15 * 256, 1)); wl.send(ptr, 4); time.sleep(0.05)
     elif cmd == "click":
         move(a[0], a[1]); time.sleep(0.05)
         b = BTN[a[2]] if len(a) > 2 else BTN["left"]

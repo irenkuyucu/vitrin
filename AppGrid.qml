@@ -261,7 +261,10 @@ Scope {
         // One highlight: the selected app. The arrow keys move it (and scroll it into
         // view); moving the mouse over an app selects that one instead. (Apps sliding
         // under a still pointer while the grid scrolls don't count as the mouse moving.)
-        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, GridView.Contain)
+        // Keys scroll the selected app into view; the pointer selecting one doesn't (a row that is
+        // half in view stays where it is under the pointer).
+        property bool followSelection: true
+        onCurrentIndexChanged: if (currentIndex >= 0 && followSelection) positionViewAtIndex(currentIndex, GridView.Contain)
 
         delegate: Item {
           id: cellItem
@@ -337,7 +340,11 @@ Scope {
               if (known && Math.abs(p.x - grid.pointerX) < 0.5 && Math.abs(p.y - grid.pointerY) < 0.5) return
               grid.pointerX = p.x
               grid.pointerY = p.y
-              if (known && !grid.menuEntry) appsView.currentIndex = cellItem.index
+              if (known && !grid.menuEntry) {
+                appsView.followSelection = false
+                appsView.currentIndex = cellItem.index
+                appsView.followSelection = true
+              }
             }
             // The pointer leaving the app takes the highlight with it (not when the grid is merely
             // scrolling under a still pointer, or a menu is open).
@@ -358,6 +365,8 @@ Scope {
           }
         }
       }
+
+      GlideScroll { anchors.fill: appsView; view: appsView }
 
       // Rows that scroll out of the panel fade away instead of being cut off.
       Rectangle {

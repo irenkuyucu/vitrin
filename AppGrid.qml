@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
 
@@ -85,15 +86,23 @@ Scope {
     visible: grid.opened
     color: "transparent"
     anchors { top: true; bottom: true; left: true; right: true }
-    // Normal: clear of the space the bar reserves, and the dock's while it isn't hiding.
-    exclusionMode: ExclusionMode.Normal
+    // Ignore: the dim reaches the screen's edges. The bar stays clear of it (a margin the size of
+    // what the compositor reserved for it) and the dock, which is on a higher layer, is drawn over it.
+    exclusionMode: ExclusionMode.Ignore
     exclusiveZone: 0
+    readonly property var reserved: {
+      var m = Hyprland.monitorFor(grid.targetScreen)
+      return m && m.lastIpcObject && m.lastIpcObject.reserved ? m.lastIpcObject.reserved : [0, 0, 0, 0]
+    }
+    margins { left: reserved[0]; top: reserved[1]; right: reserved[2] }
     WlrLayershell.namespace: grid.dock.slug + "-apps"
-    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
     onVisibleChanged: {
       if (!visible) return
+      Hyprland.refreshMonitors()      // (the reserved space is read from the compositor's latest word)
+      grow.restart()
       search.text = ""
       search.forceActiveFocus()
       appsView.currentIndex = -1
@@ -101,12 +110,46 @@ Scope {
       fade.restart()
     }
 
+    // The screen is dimmed and the apps sit on a panel in the middle of it (so it doesn't depend
+    // on how windows are laid out: tiled, floating, with or without gaps).
+    Rectangle {
+      id: dim
+      anchors.fill: parent
+      // Black on any theme (the theme's background would only whiten a light theme's surround);
+      // less of it on a light one, where black shows up more.
+      color: Qt.rgba(0, 0, 0, Commons.Color.background.hslLightness > 0.5 ? 0.35 : 0.55)
+      opacity: backdrop.opacity
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: grid.close()
+      }
+    }
+
     Rectangle {
       id: backdrop
-      anchors.fill: parent
-      color: Util.alpha(Commons.Color.background, 0.9)
+      anchors.horizontalCenter: parent.horizontalCenter
+      // Centered in the space the bar and the dock leave free (what the compositor reserved for
+      // them), which holds on tiled and floating workspaces alike. The dock's space is only
+      // taken off while it isn't hiding.
+      readonly property int freeHeight: parent.height - win.reserved[3]
+      y: Math.round((freeHeight - height) / 2)
+      // Sized from the free height (the scarce side): 80% of it, as wide as 1.8 times that
+      // (so ultrawide screens don't get a billboard), but never beyond the screen, which is what
+      // a portrait screen runs into. The width is whole columns.
+      readonly property int margin: 40
+      readonly property int panelHeight: Math.min(freeHeight - 2 * margin, Math.max(Math.round(freeHeight * 0.8), 480))
+      readonly property int columns: Math.max(1, Math.floor((Math.min(Math.round(panelHeight * 1.8), parent.width - 2 * margin) - 96) / appsView.cell))
+      width: columns * appsView.cell + 96
+      height: panelHeight
+      radius: grid.dock.menuRadius
+      color: Util.alpha(grid.dock.surface, 0.95)
+      border.width: 1
+      border.color: Util.alpha(Commons.Color.foreground, 0.25)
       opacity: 0
-      NumberAnimation { id: fade; target: backdrop; property: "opacity"; from: 0; to: 1; duration: 120 }
+      scale: 0.97
+      NumberAnimation { id: grow; target: backdrop; property: "scale"; from: 0.97; to: 1; duration: 150; easing.type: Easing.OutCubic }
+      NumberAnimation { id: fade; target: backdrop; property: "opacity"; from: 0; to: 1; duration: 150; easing.type: Easing.OutCubic }
 
       // Clicks that reach here missed every app: close.
       MouseArea {
@@ -119,7 +162,7 @@ Scope {
       Rectangle {
         id: searchBox
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 48
+        y: 30
         width: 320
         height: 36
         radius: grid.dock.rowRadius + 4
@@ -199,7 +242,7 @@ Scope {
       GridView {
         id: appsView
         readonly property int cell: 136
-        readonly property int columns: Math.max(1, Math.min(8, Math.floor((parent.width - 96) / cell)))
+        readonly property int columns: backdrop.columns
         anchors.top: searchBox.bottom
         anchors.topMargin: 32
         anchors.bottom: parent.bottom
@@ -313,6 +356,28 @@ Scope {
               }
             }
           }
+        }
+      }
+
+      // Rows that scroll out of the panel fade away instead of being cut off.
+      Rectangle {
+        x: appsView.x
+        y: appsView.y
+        width: appsView.width
+        height: 18
+        gradient: Gradient {
+          GradientStop { position: 0; color: backdrop.color }
+          GradientStop { position: 1; color: Qt.rgba(backdrop.color.r, backdrop.color.g, backdrop.color.b, 0) }
+        }
+      }
+      Rectangle {
+        x: appsView.x
+        y: appsView.y + appsView.height - 44
+        width: appsView.width
+        height: 44
+        gradient: Gradient {
+          GradientStop { position: 0; color: Qt.rgba(backdrop.color.r, backdrop.color.g, backdrop.color.b, 0) }
+          GradientStop { position: 1; color: backdrop.color }
         }
       }
 

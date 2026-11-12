@@ -44,6 +44,7 @@ the test entries from the config, and look at the dock.
   (it highlights) and then onto empty space (it clears); the arrow keys and typing still select.
   Close it by clicking the empty margin, never a spot that could be an app.
 - **App grid icons:** right after a shell restart, the first opening shows real icons, not letter tiles.
+- **App grid panel:** it opens centered on a dimmed screen, whole columns wide; clicking the dim closes it. Look at it on a light theme too (`omarchy theme set "Catppuccin Latte"`, then set your own back).
 - **Missing folder:** add a shortcut to a path that doesn't exist (a question-mark badge shows),
   create it (the badge goes), delete it (the badge returns); try a path several levels down.
 - **Windows opened by the system:** open `omarchy-launch-tui --app-id=org.omarchy.agent sleep 600`

@@ -531,6 +531,7 @@ class ShowFileTests(Fixture):
     def setUp(self):
         super().setUp()
         self.recorder("uwsm-app")
+        self.stub("gdbus", "#!/bin/bash\nexit 1\n")       # (so no test can ever reach the real desktop)
         self.file = self.base / "docs" / "a b.txt"
         self.file.parent.mkdir()
         self.file.write_text("x")

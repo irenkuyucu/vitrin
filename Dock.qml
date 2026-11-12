@@ -4510,9 +4510,26 @@ Item {
           // The visible artwork (not the padded square) stays centered under the pointer.
           readonly property real artOffset: root.artOffsetFor(root.iconSource(win.dragIcon), win.size)
           readonly property real artOffsetY: root.artOffsetYFor(root.iconSource(win.dragIcon), win.size)
-          x: win.dragRemoving
+          x: (win.dragRemoving
             ? win.dragSceneX - width / 2 + artOffset
-            : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset))
+            : Math.max(dockLeft, Math.min(dockLeft + dockBox.width - width, win.dragSceneX - width / 2 + artOffset)))
+            + shakeOffset
+          // An icon that can't be pulled out (a running app) shakes its head when tugged
+          // upward, once per tug (pulling back down re-arms it).
+          readonly property real pullUp: Math.max(0, restingY - (win.dragSceneY - height / 2))
+          property bool tugging: false
+          onPullUpChanged: {
+            if (win.dragRemovable) return
+            if (!tugging && pullUp > 48) { tugging = true; shake.restart() }
+            else if (tugging && pullUp < 18) tugging = false
+          }
+          property real shakeT: 1
+          readonly property real shakeOffset: win.dragRemovable ? 0 : 7 * Math.sin(shakeT * 3 * 2 * Math.PI) * (1 - shakeT)
+          NumberAnimation { id: shake; target: dragGhost; property: "shakeT"; from: 0; to: 1; duration: 400 }
+          Connections {
+            target: win
+            function onDragFromChanged() { if (win.dragFrom === -1) { shake.stop(); dragGhost.shakeT = 1; dragGhost.tugging = false } }
+          }
           y: dragLayer.offsetY + artOffsetY
              + (win.dragRemovable ? Math.min(restingY, win.dragSceneY - height / 2) : restingY)
           opacity: (win.dragRemoving ? 0.7 : 1) * (win.dragMissing ? 0.4 : 1)

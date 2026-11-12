@@ -10,7 +10,8 @@ theme and runs inside the Quickshell session.
 
 Requires Omarchy 4 on Hyprland. Vitrin was developed on Omarchy 4.0.6 and 4.5 with
 Quickshell 0.3.2. It doesn't need anything beyond a regular Omarchy install: its helper
-scripts use ImageMagick, `inotify-tools`, Python 3 and `gio`, which Omarchy already includes.
+scripts use ImageMagick, `inotify-tools`, `jq`, Python 3, `file` and `gio`, which Omarchy already
+includes.
 
 ```bash
 omarchy plugin add https://github.com/irenkuyucu/vitrin.git --enable

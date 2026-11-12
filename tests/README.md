@@ -6,7 +6,7 @@ seconds and prints `ALL CHECKS PASSED` when everything is fine.
 | Part | What it checks |
 |---|---|
 | `run.sh` | syntax of the shell scripts, Python files, `manifest.json` and QML files |
-| `lint_baseline.py` | `qmllint` reports nothing new (known warnings are in `lint-baseline.txt`) |
+| `lint_baseline.py` | `qmllint` reports nothing new (known warnings are in `lint-baseline.txt`; "unqualified access" is ignored, qmllint can't see the shell's types) |
 | `test_scripts.py` | the helper scripts in `scripts/`, run against temporary folders with the desktop commands stubbed |
 | `logic/` | the JavaScript logic inside the QML files (window grouping, config, folders, menus, icons), run in Node |
 | `live/` | checks that need a running desktop, done by hand: see `live/README.md` |

@@ -1,9 +1,10 @@
 """Checks that qmllint reports nothing new.
 
-qmllint finds a few hundred warnings in this plugin, mostly because it can't see the shell's
-own types (unqualified access to ids and Quickshell objects). They're recorded in
-lint-baseline.txt as a count per file and kind of warning, so a change that adds one is
-noticed while line numbers can move freely.
+qmllint finds a few hundred warnings in this plugin, nearly all of them "unqualified access"
+(it can't see the shell's own types, so every use of an id or a Quickshell object looks
+suspect). Those say nothing and are left out. The rest are recorded in lint-baseline.txt as a
+count per file and kind of warning, so a change that adds one is noticed while line numbers
+can move freely.
 
   python3 tests/lint_baseline.py            compare with the baseline (fails on anything new)
   python3 tests/lint_baseline.py --update   record the current state as the baseline
@@ -19,6 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).resolve().parent / "lint-baseline.txt"
 QMLLINT = "/usr/lib/qt6/bin/qmllint"
 IMPORTS = "/usr/share/omarchy/shell"
+NOISE = {"unqualified"}
 
 
 def current():
@@ -27,7 +29,7 @@ def current():
     counts = collections.Counter()
     for line in out.splitlines():
         m = re.match(r"Warning: (\S+?\.qml):\d+:\d+: .*\[([\w-]+)\]$", line)
-        if m:
+        if m and m.group(2) not in NOISE:
             counts[(m.group(1), m.group(2))] += 1
     return counts
 

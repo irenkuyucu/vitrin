@@ -523,6 +523,60 @@ class LaunchTests(Fixture):
         self.assertEqual(len(lines), 3)
         self.assertIn(b"python", lines[1])
 
+# ---------------------------------------------------------------- the file manager
+
+class ShowFileTests(Fixture):
+    """Show in Files: the file, selected, in whichever file manager the system has."""
+
+    def setUp(self):
+        super().setUp()
+        self.recorder("uwsm-app")
+        self.file = self.base / "docs" / "a b.txt"
+        self.file.parent.mkdir()
+        self.file.write_text("x")
+
+    def test_managers_with_a_select_option_get_the_file_on_their_command_line(self):
+        for entry, program, expected in (
+                ("org.gnome.Nautilus", "nautilus", ["nautilus", "--select"]),
+                ("org.kde.dolphin", "dolphin", ["dolphin", "--select"]),
+                ("com.thisisgm.flea", "flea", ["flea", "--select"]),
+                ("folio", "folio", ["folio"])):
+            with self.subTest(entry=entry):
+                self.stub(program, "#!/bin/bash\n")
+                self.log.unlink(missing_ok=True)
+                self.run_script("show-file.sh", entry, self.file)
+                self.assertEqual(self.logged(), ["--", *expected, str(self.file)])
+
+    def test_a_manager_that_isnt_installed_falls_through_to_dbus(self):
+        self.recorder("gdbus")
+        self.env["PATH"] = self.limited_path("bash", "dirname", "python3")      # (no dolphin on it)
+        self.run_script("show-file.sh", "org.kde.dolphin", self.file)
+        self.assertIn("org.freedesktop.FileManager1.ShowItems", self.logged())
+        self.assertIn(self.file.as_uri().replace(" ", "%20"), self.logged()[-2])
+
+    def test_other_managers_get_the_dbus_call(self):
+        self.recorder("gdbus")
+        result = self.run_script("show-file.sh", "thunar", self.file)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("org.freedesktop.FileManager1.ShowItems", self.logged())
+
+    def test_when_nothing_answers_the_folder_opens(self):
+        self.stub("gdbus", "#!/bin/bash\nexit 1\n")
+        entry = Path(self.env["XDG_DATA_HOME"]) / "applications" / "thunar.desktop"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("[Desktop Entry]\nType=Application\nName=Thunar\nExec=thunar %U\n")
+        self.run_script("show-file.sh", "thunar", self.file)
+        self.assertEqual(self.logged(), ["--", "gio", "launch", str(entry), str(self.file.parent)])
+
+    def test_without_uwsm_the_manager_starts_on_its_own(self):
+        (self.bin / "uwsm-app").unlink()
+        self.recorder("setsid")
+        self.stub("nautilus", "#!/bin/bash\n")
+        self.env["PATH"] = self.limited_path("bash", "dirname")
+        self.run_script("show-file.sh", "org.gnome.Nautilus", self.file)
+        self.assertEqual(self.logged(), ["-f", "nautilus", "--select", str(self.file)])
+
+
 # ---------------------------------------------------------------- previews
 
 @needs("magick")

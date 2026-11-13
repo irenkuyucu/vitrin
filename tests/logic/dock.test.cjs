@@ -276,6 +276,36 @@ describe("syncLayout", () => {
 
 // ------------------------------------------------------------------ pins
 
+describe("Trash commands", () => {
+  function trash() {
+    const trashRunner = { running: false, command: null };
+    const trashCounter = { running: false };
+    const env = dock({ root: { trashJobs: [], runWanted: {}, trashCount: 5 }, globals: { trashRunner, trashCounter } });
+    return { env, trashRunner, trashCounter };
+  }
+
+  it("run one at a time, in order", () => {
+    const { env, trashRunner } = trash();
+    env.root.runTrash(["gio", "trash", "--", "/a"]);
+    env.root.runTrash(["gio", "trash", "--", "/b"]);
+    assert.deepEqual(trashRunner.command, ["gio", "trash", "--", "/a"]);
+    assert.equal(trashRunner.running, true);
+    trashRunner.running = false;                     // (the first is done)
+    env.root.nextTrashJob();
+    assert.deepEqual(trashRunner.command, ["gio", "trash", "--", "/b"]);
+    trashRunner.running = false;
+    env.root.nextTrashJob();
+    assert.equal(trashRunner.running, false);        // (nothing left)
+  });
+
+  it("emptying the Trash runs gio and shows it empty at once", () => {
+    const { env, trashRunner } = trash();
+    env.root.emptyTrash();
+    assert.deepEqual(trashRunner.command, ["gio", "trash", "--empty"]);
+    assert.equal(env.root.trashCount, 0);
+  });
+});
+
 describe("window titles in the menu", () => {
   const env = dock();
   const labels = rows => env.root.numberSameLabels(rows.map(label => ({ kind: "window", label }))).map(r => r.label);
@@ -855,6 +885,55 @@ describe("runRow", () => {
 });
 
 // ------------------------------------------------------------------ icons
+
+describe("processes that run once more when asked during a run", () => {
+  const env = dock();
+  const process = (running = false) => ({ running });
+
+  it("start when idle", () => {
+    const p = process();
+    env.root.runWanted = {};
+    env.root.requestRun(p, "x");
+    assert.equal(p.running, true);
+  });
+
+  it("run once more, however many times they were asked meanwhile", () => {
+    const p = process(true);
+    env.root.runWanted = {};
+    for (let i = 0; i < 5; i++) env.root.requestRun(p, "x");
+    env.root.runAgainIfWanted(p, "x");               // (still running: nothing yet)
+    p.running = false;
+    env.root.runAgainIfWanted(p, "x");
+    assert.equal(p.running, true);                    // (the one more run)
+    p.running = false;
+    env.root.runAgainIfWanted(p, "x");
+    assert.equal(p.running, false);                   // (and no more)
+  });
+
+  it("don't run again when nobody asked", () => {
+    const p = process();
+    env.root.runWanted = {};
+    env.root.runAgainIfWanted(p, "x");
+    assert.equal(p.running, false);
+  });
+
+  it("are what a change in the Trash starts", () => {
+    const trashCounter = process();
+    const e = dock({ root: { runWanted: {} }, globals: { trashCounter } });
+    e.root.refreshTrash();
+    assert.equal(trashCounter.running, true);
+  });
+
+  it("keep their requests apart by name", () => {
+    const a = process(true), b = process(true);
+    env.root.runWanted = {};
+    env.root.requestRun(a, "a");
+    a.running = false; b.running = false;
+    env.root.runAgainIfWanted(b, "b");
+    env.root.runAgainIfWanted(a, "a");
+    assert.deepEqual([a.running, b.running], [true, false]);
+  });
+});
 
 describe("the icon lookup program (runs only while there is something to look up)", () => {
   function lookup(state = {}, root = {}) {

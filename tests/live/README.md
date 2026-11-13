@@ -95,6 +95,9 @@ the test entries from the config, and look at the dock.
   `create,delete,moved_to`) by its PID several times in a row, right after it comes back: it
   restarts after 2 s, then 4, then 8 (up to a minute), and a watcher that ran for 10 s or more
   starts the count over.
+- **Trash follows at once:** `gio trash` a scratch file: the dock's Trash icon turns full within a
+  fraction of a second (the count starts about 50 ms after, with no timer), and `gio trash --empty`
+  turns it empty again. Emptying it from the dock's menu does the same.
 - **Config file unreadable:** `chmod 000 ~/.config/omarchy/vitrin.json`, then `touch` it. The log
   says it exists but can't be read, nothing is written; after `chmod 644` and another `touch`
   the file is read again and is unchanged.

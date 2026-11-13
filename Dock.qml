@@ -2004,25 +2004,52 @@ Item {
     id: trashCounter
     running: true                // once at startup, then see refreshTrash
     command: ["bash", root.script("trash-count.sh")]
+    onRunningChanged: root.runAgainIfWanted(trashCounter, "trash")
     stdout: StdioCollector {
       onStreamFinished: root.trashCount = parseInt(text) || 0
     }
   }
 
-  function refreshTrash() {
-    if (!trashCounter.running) trashCounter.running = true
+  // Runs a process (or, if it is running already, once more when it has finished): a burst of
+  // requests costs at most one extra run, and nothing waits on a timer.
+  property var runWanted: ({})
+  function requestRun(process, name) {
+    if (process.running) root.runWanted[name] = true
+    else process.running = true
+  }
+  function runAgainIfWanted(process, name) {
+    if (process.running || !root.runWanted[name]) return
+    root.runWanted[name] = false
+    process.running = true
   }
 
-  Timer {
-    id: trashRefreshSoon
-    interval: 700
-    onTriggered: root.refreshTrash()
+  // Counting is cheap and never reads what is in the Trash, so it needs no waiting: the first
+  // change counts at once, and changes that arrive during a count make one more count after it.
+  function refreshTrash() { root.requestRun(trashCounter, "trash") }
+
+  // The commands that change the Trash (dropping files on it, emptying it) run one after another
+  // here, and it is counted again when each is done.
+  property var trashJobs: []
+  function runTrash(argv) {
+    root.trashJobs.push(argv)
+    root.nextTrashJob()
+  }
+  function nextTrashJob() {
+    if (trashRunner.running || root.trashJobs.length === 0) return
+    trashRunner.command = root.trashJobs.shift()
+    trashRunner.running = true
+  }
+  Process {
+    id: trashRunner
+    onExited: {
+      root.refreshTrash()
+      root.nextTrashJob()
+    }
   }
 
   function emptyTrash() {
-    Util.execArgv(["gio", "trash", "--empty"])
+    root.runTrash(["gio", "trash", "--empty"])
     root.trashCount = 0
-    trashRefreshSoon.restart()
   }
 
   // ------------------------------------------------------------ folder stacks
@@ -2266,7 +2293,7 @@ Item {
         var bar = String(line).indexOf("|")
         var events = String(line).slice(0, bar)
         var dir = String(line).slice(bar + 1).replace(/\/+$/, "")
-        if (dir === root.trashFilesDir) trashRefreshSoon.restart()
+        if (dir === root.trashFilesDir) root.refreshTrash()
         else root.refreshFoldersSoon(dir)
         // A folder that went away is waited for (by missingWatcher) from now on.
         if (events.indexOf("DELETE_SELF") !== -1 || events.indexOf("MOVE_SELF") !== -1) Qt.callLater(root.restartWatcher)
@@ -2313,7 +2340,7 @@ Item {
     onTriggered: {
       root.restartWatcher()
       root.refreshFoldersSoon()
-      trashRefreshSoon.restart()
+      root.refreshTrash()
     }
   }
   Timer {
@@ -2565,8 +2592,7 @@ Item {
       if (files.length === 0) return
       if (isTrash(item)) {
         // Moves to the Trash (recoverable).
-        Util.execArgv(["gio", "trash", "--"].concat(files))
-        trashRefreshSoon.restart()
+        root.runTrash(["gio", "trash", "--"].concat(files))
       } else {
         moveIntoFolder(expandPath(item.path), files)
         root.refreshFoldersSoon(expandPath(item.path))

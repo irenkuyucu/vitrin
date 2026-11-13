@@ -2283,6 +2283,11 @@ Item {
     return root.stackListing.dir === dir ? root.stackListing.total : filesFor(folder).length
   }
 
+  // Files are often created first and filled in afterwards (a screenshot takes about 0.25 s, a
+  // big copy about as long), and nothing says when a write is done, so a folder is listed once
+  // it has been quiet for a moment: listing at once would catch files half written, with an
+  // empty or broken preview. (Local bursts arrive within a few milliseconds; a longer write
+  // can't be waited out by any fixed time.)
   Timer {
     id: folderRefreshSoon
     interval: 700

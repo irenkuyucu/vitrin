@@ -6,8 +6,7 @@
 #   3. its display name
 #   4. the Trash's display name (as file managers show it)
 set -u
-fm=$(xdg-mime query default inode/directory 2>/dev/null | head -n 1)
-echo "${fm%.desktop}"
+bash "$(dirname -- "$0")/default-file-manager.sh"
 
 downloads=$(xdg-user-dir DOWNLOAD 2>/dev/null)
 # xdg-user-dir answers with the home folder when no Downloads folder is set.

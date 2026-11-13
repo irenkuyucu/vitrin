@@ -162,6 +162,30 @@ Item {
   property string trashName: "Trash"
   property bool placesKnown: false
 
+  // ---- defaults that change
+  // The terminal and the file manager are whatever the user's files say; the dock reads those
+  // files again when one is created, replaced or edited (not on a schedule). Files that aren't
+  // there yet are watched too: the first choice creates them.
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || (root.home + "/.config")
+  readonly property string desktopName: String(Quickshell.env("XDG_CURRENT_DESKTOP") || "hyprland").split(":")[0].toLowerCase()
+  FileView { path: root.configHome + "/xdg-terminals.list"; watchChanges: true; onFileChanged: root.refreshTerminal() }
+  FileView { path: root.configHome + "/hyprland-xdg-terminals.list"; watchChanges: true; onFileChanged: root.refreshTerminal() }
+  FileView { path: root.configHome + "/mimeapps.list"; watchChanges: true; onFileChanged: root.refreshFileManager() }
+  FileView { path: root.configHome + "/" + root.desktopName + "-mimeapps.list"; watchChanges: true; onFileChanged: root.refreshFileManager() }
+
+  function refreshFileManager() { root.requestRun(fileManagerFinder, "fileManager") }
+  Process {
+    id: fileManagerFinder
+    command: ["bash", root.script("default-file-manager.sh")]
+    onRunningChanged: root.runAgainIfWanted(fileManagerFinder, "fileManager")
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.systemFileManager = String(text).trim()
+        root.resolveFileManager()
+      }
+    }
+  }
+
   Process {
     id: placesFinder
     running: true
@@ -234,6 +258,7 @@ Item {
     id: terminalFinder
     running: true
     command: ["bash", root.script("default-terminal.sh")]
+    onRunningChanged: root.runAgainIfWanted(terminalFinder, "terminal")
     stdout: StdioCollector {
       onStreamFinished: {
         var id = root.pickTerminal(String(text).trim())
@@ -244,14 +269,9 @@ Item {
     }
   }
 
-  // Re-checked when the dock appears (at most once a minute), so switching terminals with
-  // `omarchy install terminal` is picked up without restarting the shell.
-  property real terminalCheckedAt: 0
-  function refreshTerminal() {
-    if (terminalFinder.running || Date.now() - root.terminalCheckedAt < 60000) return
-    root.terminalCheckedAt = Date.now()
-    terminalFinder.running = true
-  }
+  // Read again when the files that name it change (see "defaults that change" below), so
+  // switching terminals with `omarchy install terminal` is picked up without restarting the shell.
+  function refreshTerminal() { root.requestRun(terminalFinder, "terminal") }
 
   // Grouping rules: built-in ones for terminals, then the user's from the config file.
   readonly property var effectiveAliases: {
@@ -3902,7 +3922,6 @@ Item {
         if (!win.revealed) {
           root.refreshTrash()
           root.refreshFolders()
-          root.refreshTerminal()
         }
         win.revealed = true
         hideTimer.restart()

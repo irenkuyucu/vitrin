@@ -98,6 +98,11 @@ the test entries from the config, and look at the dock.
 - **Trash follows at once:** `gio trash` a scratch file: the dock's Trash icon turns full within a
   fraction of a second (the count starts about 50 ms after, with no timer), and `gio trash --empty`
   turns it empty again. Emptying it from the dock's menu does the same.
+- **Terminal and file manager follow their files:** nothing runs at idle; `touch` `~/.config/xdg-terminals.list`
+  (or edit it) and `default-terminal.sh` runs once, `touch` `~/.config/mimeapps.list` or
+  `~/.config/hyprland-mimeapps.list` and `default-file-manager.sh` runs once (count the runs with
+  `inotifywait -m -e open scripts/<script>`; sampling `ps` can miss a script this short). A file that
+  doesn't exist yet counts too: create it. A changed default file manager swaps the first slot.
 - **Config file unreadable:** `chmod 000 ~/.config/omarchy/vitrin.json`, then `touch` it. The log
   says it exists but can't be read, nothing is written; after `chmod 644` and another `touch`
   the file is read again and is unchanged.

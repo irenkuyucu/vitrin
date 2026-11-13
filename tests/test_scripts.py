@@ -607,6 +607,16 @@ class TrashCountTests(Fixture):
         self.assertEqual(self.count(), "0")
 
 
+class DefaultFileManagerTests(Fixture):
+    def test_the_default_without_its_extension(self):
+        self.stub("xdg-mime", "#!/bin/bash\necho org.gnome.Nautilus.desktop\n")
+        self.assertEqual(self.run_script("default-file-manager.sh").stdout, b"org.gnome.Nautilus\n")
+
+    def test_no_default_is_an_empty_line(self):
+        self.stub("xdg-mime", "#!/bin/bash\nexit 1\n")
+        self.assertEqual(self.run_script("default-file-manager.sh").stdout, b"\n")
+
+
 class PlacesTests(Fixture):
     """The system's defaults the dock reads at startup: file manager, Downloads, Trash."""
 

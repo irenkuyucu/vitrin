@@ -335,6 +335,28 @@ describe("Omarchy's colours", () => {
   });
 });
 
+describe("the terminal and the file manager follow their files", () => {
+  it("are read again when the files that name them change", () => {
+    const terminalFinder = { running: false }, fileManagerFinder = { running: false };
+    const e = dock({ root: { runWanted: {} }, globals: { terminalFinder, fileManagerFinder } });
+    e.root.refreshTerminal();
+    e.root.refreshFileManager();
+    assert.deepEqual([terminalFinder.running, fileManagerFinder.running], [true, true]);
+  });
+
+  it("are read once more, not many times, after a burst of changes during a read", () => {
+    const fileManagerFinder = { running: true };
+    const e = dock({ root: { runWanted: {} }, globals: { fileManagerFinder } });
+    for (let i = 0; i < 4; i++) e.root.refreshFileManager();
+    fileManagerFinder.running = false;
+    e.root.runAgainIfWanted(fileManagerFinder, "fileManager");
+    assert.equal(fileManagerFinder.running, true);
+    fileManagerFinder.running = false;
+    e.root.runAgainIfWanted(fileManagerFinder, "fileManager");
+    assert.equal(fileManagerFinder.running, false);
+  });
+});
+
 describe("the default terminal and browser", () => {
   const entry = (id, extra = {}) => [id, { id, categories: [], noDisplay: false, execString: id, ...extra }];
   function dockWith(...entries) {
